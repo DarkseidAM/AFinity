@@ -3,21 +3,22 @@ package com.makd.afinity.player.exoplayer
 import android.content.Context
 import androidx.annotation.VisibleForTesting
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultRenderersFactory
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 
 /**
  * RenderersFactory for the ExoPlayer backend that orders hardware (MediaCodec) vs.
- * software (FFmpeg/AV1/IAMF/MPEG-H extension) renderers according to the user's
- * [DecoderPriority].
+ * software (FFmpeg) renderers according to the user's [DecoderPriority].
  *
- * The extension renderers are auto-discovered by [DefaultRenderersFactory] (via the
- * bundled `lib-decoder-*` AARs) whenever the extension renderer mode is not OFF.
+ * Extends NextLib's [NextRenderersFactory], which adds FFmpeg software **audio** and
+ * **video** decoders (H.264/HEVC/VP8/VP9 + AC3/E-AC3/DTS/TrueHD/...) on top of the
+ * standard media3 renderers. The extension renderers are selected per the extension
+ * renderer mode derived from [priority].
  */
 @UnstableApi
 class AfinityRenderersFactory(
     context: Context,
     priority: DecoderPriority,
-) : DefaultRenderersFactory(context) {
+) : NextRenderersFactory(context) {
 
     private val rendererMode: Int = when (priority) {
         DecoderPriority.AUTO -> EXTENSION_RENDERER_MODE_ON

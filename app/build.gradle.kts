@@ -160,7 +160,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.libmpv)
     implementation(libs.lottie.compose)
-    implementation(libs.media3.ffmpeg.decoder)
+    // NextLib FFmpeg software audio+video decoders, repackaged with renamed FFmpeg
+    // .so (libnx*.so) so they don't collide with libmpv's bundled FFmpeg libraries.
+    // See tools/build-decoders/repack-nextlib.sh.
+    implementation(files("libs/nextlib-media3ext-nxstatic-1.10.0-0.12.1.aar"))
     implementation(libs.timber)
     implementation(libs.richtext.ui)
     implementation(libs.richtext.ui.material3)
@@ -170,6 +173,9 @@ dependencies {
     implementation(libs.androidx.paging.compose)
     implementation(libs.play.services.cast.framework)
     implementation(libs.androidx.mediarouter)
+    // Provides Theme.MaterialComponents.* (parent of Theme.AFinity in themes.xml).
+    // Previously pulled in transitively by media3 1.9.x; media3 1.10.0 dropped it.
+    implementation("com.google.android.material:material:1.12.0")
     coreLibraryDesugaring(libs.android.desugar.jdk)
 
     testImplementation("junit:junit:4.13.2")

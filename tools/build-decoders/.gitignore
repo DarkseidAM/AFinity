@@ -1,4 +1,0 @@
-# Build intermediates — only the scripts and the produced AARs (in app/libs) are tracked.
-src/
-out/
-.android-sdk/

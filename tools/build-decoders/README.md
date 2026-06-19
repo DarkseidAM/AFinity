@@ -1,58 +1,38 @@
-# AFinity native decoder build
+# ExoPlayer software decoders (NextLib, repackaged)
 
-Builds AFinity's media3 **core** + **FFmpeg/AV1** (and later IAMF/MPEG-H) decoder
-AARs from one pinned `androidx/media` checkout, plus the prebuilt FFmpeg/dav1d
-native libs, and drops the AARs into `app/libs/`.
+Gives AFinity's **ExoPlayer** backend full software audio **and video** decoding so
+it can play files the device can't hardware-decode (10-bit HEVC on weak SoCs, VP8/9,
+and the broad audio set: AC3/E-AC3/DTS/DTS-HD/TrueHD/…). MPV remains the default
+backend; this brings ExoPlayer much closer to parity.
 
-This is what gives the **ExoPlayer** backend full software-decode coverage so it
-plays virtually any codec (the same approach Just Player uses).
+## How it works
 
-## The one hard rule
+We use [NextLib](https://github.com/anilbeesetti/nextlib)'s `media3ext` module — the
+only maintained library with a working media3 `FfmpegVideoRenderer` (media3's own
+`ExperimentalFfmpegVideoRenderer` is an unimplemented stub; Just Player and the
+jellyfin decoder are FFmpeg-**audio**-only, verified at the JNI-symbol level).
 
-`media3` core, the decoder extensions, and every Maven `media3-*` satellite in
-`gradle/libs.versions.toml` **must all be the same version**. `build-all.sh`
-reads the `media3 = "x.y.z"` value from that file and checks out `androidx/media`
-at the matching tag automatically. **Every media3 bump → re-run this build.**
+NextLib ships FFmpeg as separate shared libraries (`libavcodec.so`, `libavutil.so`,
+`libswresample.so`, `libswscale.so`). Those filenames **collide** with the ones
+`libmpv` (the MPV backend) already bundles, and they're different FFmpeg builds, so a
+straight dependency breaks `mergeDebugNativeLibs` ("2 files found with path
+lib/arm64-v8a/libavcodec.so").
 
-## Requirements
+`repack-nextlib.sh` resolves this by renaming NextLib's four FFmpeg `.so` with an
+`nx` prefix (`libnxavcodec.so`, …) and patching the `SONAME` / `DT_NEEDED` entries
+(via `patchelf`) so `libmedia3ext.so` loads the renamed copies. libmpv keeps its own
+`libavcodec.so`; both sets ship side-by-side with no collision.
 
-Only **Docker** is needed on the host. The image installs the NDK (r27c, for
-16 KB page alignment), `nasm`/`yasm`, `meson`/`ninja`, JDK 17, and the rest.
-
-## Run
+## Regenerating the AAR
 
 ```bash
-# from the repo root
-docker build -t afinity-decoders tools/build-decoders
-docker run --rm -v "$PWD":/work afinity-decoders bash tools/build-decoders/build-all.sh
+bash tools/build-decoders/repack-nextlib.sh
 ```
 
-Outputs (committed to git):
-- `app/libs/lib-exoplayer-release.aar`
-- `app/libs/lib-decoder-ffmpeg-release.aar`
-- (Phase 2) `app/libs/lib-decoder-iamf-release.aar`, `lib-decoder-mpegh-release.aar`
+Produces `app/libs/nextlib-media3ext-nxstatic-<version>.aar`, which `app/build.gradle.kts`
+consumes via `implementation(files(...))`. The renderer is wired through
+`AfinityRenderersFactory : NextRenderersFactory`.
 
-Build intermediates (`src/`, `out/`, `.android-sdk/`) are git-ignored.
-
-## Scripts
-
-| File | Purpose |
-| --- | --- |
-| `Dockerfile` | self-contained build image (NDK r27c + toolchains) |
-| `build-dav1d.sh` | cross-compile dav1d (AV1) static libs, 4 ABIs, 16 KB-aligned |
-| `build-ffmpeg.sh` | cross-compile FFmpeg shared libs with full decoder set + dav1d |
-| `build-all.sh` | clone media tag → dav1d → ffmpeg → stage → patch → build AARs → copy |
-| `patches/` | the codec allow-list patch (see `patches/README.md`) |
-
-## ABIs
-
-All four: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`. (32-bit AV1 software decode
-is slow — fallback only.)
-
-## Test notes
-
-Record codec-matrix and APK-size results here after device verification
-(Tasks 12 / 16 of the implementation plan).
-
-- Codec matrix: _pending first build_
-- APK size delta: _pending first build_
+Bump `NEXTLIB_VERSION` in the script when updating; keep it aligned with the app's
+`media3` version (NextLib's version prefix is the media3 version it targets, e.g.
+`1.10.0-…` ↔ media3 `1.10.0`).
