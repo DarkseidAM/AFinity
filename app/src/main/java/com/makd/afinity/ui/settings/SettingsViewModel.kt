@@ -10,6 +10,7 @@ import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
 import com.makd.afinity.data.models.player.VideoZoomMode
+import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.user.User
 import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.AudiobookshelfRepository
@@ -192,6 +193,18 @@ constructor(
         viewModelScope.launch {
             preferencesRepository.useExoPlayer.collect {
                 _uiState.value = _uiState.value.copy(useExoPlayer = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.videoDecoderPriority.collect {
+                _uiState.value = _uiState.value.copy(videoDecoderPriority = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.dolbyVisionConversion.collect {
+                _uiState.value = _uiState.value.copy(dolbyVisionConversion = it)
             }
         }
 
@@ -438,6 +451,28 @@ constructor(
         }
     }
 
+    fun setVideoDecoderPriority(priority: DecoderPriority) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setVideoDecoderPriority(priority)
+                Timber.d("Video decoder priority set to: ${priority.getDisplayName()}")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set video decoder priority")
+            }
+        }
+    }
+
+    fun toggleDolbyVisionConversion(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setDolbyVisionConversion(enabled)
+                Timber.d("Dolby Vision conversion set to: $enabled")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set Dolby Vision conversion")
+            }
+        }
+    }
+
     fun setMpvHwDec(hwDec: MpvHwDec) {
         viewModelScope.launch {
             try {
@@ -666,6 +701,8 @@ data class SettingsUiState(
     val skipIntroEnabled: Boolean = true,
     val skipOutroEnabled: Boolean = true,
     val useExoPlayer: Boolean = true,
+    val videoDecoderPriority: DecoderPriority = DecoderPriority.default,
+    val dolbyVisionConversion: Boolean = false,
     val logoAutoHide: Boolean = false,
     val defaultVideoZoomMode: VideoZoomMode = VideoZoomMode.FIT,
     val mpvHwDec: MpvHwDec = MpvHwDec.default,

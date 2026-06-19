@@ -22,4 +22,11 @@ enum class DecoderPriority(val value: String) {
         fun fromValue(value: String): DecoderPriority =
             entries.firstOrNull { it.value == value } ?: default
     }
+
+    fun getDisplayName(): String =
+        when (this) {
+            AUTO -> "Auto (hardware, then software)"
+            PREFER_SOFTWARE -> "Prefer software"
+            PREFER_HARDWARE -> "Force hardware"
+        }
 }

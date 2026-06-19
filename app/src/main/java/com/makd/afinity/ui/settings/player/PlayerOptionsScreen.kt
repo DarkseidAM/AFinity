@@ -78,6 +78,7 @@ import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
 import com.makd.afinity.data.models.player.SubtitleHorizontalAlignment
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
+import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.player.SubtitlePreferences
 import com.makd.afinity.data.models.player.SubtitleVerticalPosition
 import com.makd.afinity.data.models.player.VideoZoomMode
@@ -202,6 +203,36 @@ fun PlayerOptionsScreen(
                             onValueChange = viewModel::setMpvAudioOutput,
                             labelProvider = { it.getDisplayName() },
                             icon = painterResource(id = R.drawable.ic_audio),
+                        )
+                    }
+                }
+            }
+
+            item {
+                AnimatedVisibility(
+                    visible = uiState.useExoPlayer,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    SettingsGroup(
+                        title = stringResource(R.string.pref_group_exoplayer),
+                        modifier = Modifier.padding(bottom = 24.dp),
+                    ) {
+                        SubtitleDropdownItem(
+                            title = stringResource(R.string.pref_decoder_priority_title),
+                            selectedOption = uiState.videoDecoderPriority,
+                            options = DecoderPriority.entries.toList(),
+                            onValueChange = viewModel::setVideoDecoderPriority,
+                            labelProvider = { it.getDisplayName() },
+                            icon = painterResource(id = R.drawable.ic_cpu),
+                        )
+                        SettingsDivider()
+                        SettingsSwitchItem(
+                            icon = painterResource(id = R.drawable.ic_video_settings),
+                            title = stringResource(R.string.pref_dolby_vision_title),
+                            subtitle = stringResource(R.string.pref_dolby_vision_summary),
+                            checked = uiState.dolbyVisionConversion,
+                            onCheckedChange = viewModel::toggleDolbyVisionConversion,
                         )
                     }
                 }
