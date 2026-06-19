@@ -26,6 +26,7 @@ aboutLibraries {
 configure<ApplicationExtension> {
     namespace = "com.makd.afinity"
     compileSdk = 36
+    ndkVersion = "28.0.13004108"
 
     defaultConfig {
         applicationId = "com.makd.afinity"
@@ -37,6 +38,15 @@ configure<ApplicationExtension> {
         buildConfigField("String", "APP_NAME", "\"${appName}\"")
         buildConfigField("String", "VERSION_NAME", "\"${appVersionName}\"")
         buildConfigField("int", "VERSION_CODE", appVersionCode)
+        // Dolby Vision profile 7 -> 8.1 conversion (libdovi JNI + extractor hook).
+        buildConfigField("boolean", "DOVI_NATIVE_ENABLED", "true")
+        buildConfigField("boolean", "DOVI_EXTRACTOR_HOOK_READY", "true")
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {
@@ -177,6 +187,9 @@ dependencies {
     // Previously pulled in transitively by media3 1.9.x; media3 1.10.0 dropped it.
     implementation("com.google.android.material:material:1.12.0")
     coreLibraryDesugaring(libs.android.desugar.jdk)
+
+    // Nullness annotations used by the vendored dvmkv MatroskaExtractor (compile-only).
+    compileOnly("org.checkerframework:checker-qual:3.43.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:core:1.6.1")

@@ -385,9 +385,30 @@ constructor(
         val renderersFactory =
             com.makd.afinity.player.exoplayer.AfinityRenderersFactory(context, decoderPriority)
 
+        val dolbyVisionConversion =
+            kotlinx.coroutines.runBlocking { preferencesRepository.getDolbyVisionConversion() }
+
+        val extractorsFactory: androidx.media3.extractor.ExtractorsFactory =
+            if (dolbyVisionConversion) {
+                Timber.d("Dolby Vision 7->8.1 conversion enabled")
+                com.makd.afinity.player.exoplayer.dovi.DolbyVisionExtractorsFactory(
+                    delegate = androidx.media3.extractor.DefaultExtractorsFactory(),
+                    config = com.makd.afinity.player.exoplayer.dovi.DolbyVisionConversionConfig(
+                        active = true,
+                        manualDv81 = true,
+                    ),
+                )
+            } else {
+                androidx.media3.extractor.DefaultExtractorsFactory()
+            }
+
+        val mediaSourceFactory =
+            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context, extractorsFactory)
+
         return ExoPlayer.Builder(context, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setTrackSelector(trackSelector)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
             .setPauseAtEndOfMediaItems(true)
