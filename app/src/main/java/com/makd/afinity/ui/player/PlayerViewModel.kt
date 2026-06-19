@@ -377,9 +377,13 @@ constructor(
             "ExoPlayer preferences: preferredAudioLang=$preferredAudioLang, preferredSubLang=$preferredSubLang"
         )
 
+        val decoderPriority =
+            kotlinx.coroutines.runBlocking { preferencesRepository.getVideoDecoderPriority() }
+
+        Timber.d("ExoPlayer decoder priority: $decoderPriority")
+
         val renderersFactory =
-            DefaultRenderersFactory(context)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            com.makd.afinity.player.exoplayer.AfinityRenderersFactory(context, decoderPriority)
 
         return ExoPlayer.Builder(context, renderersFactory)
             .setAudioAttributes(audioAttributes, true)

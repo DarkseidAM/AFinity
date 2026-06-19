@@ -21,6 +21,7 @@ import com.makd.afinity.data.models.player.SubtitleVerticalPosition
 import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.di.AppPreferences
+import com.makd.afinity.player.exoplayer.DecoderPriority
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -48,6 +49,8 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         val SKIP_INTRO_ENABLED = booleanPreferencesKey("skip_intro_enabled")
         val SKIP_OUTRO_ENABLED = booleanPreferencesKey("skip_outro_enabled")
         val USE_EXO_PLAYER = booleanPreferencesKey("use_exo_player")
+        val VIDEO_DECODER_PRIORITY = stringPreferencesKey("video_decoder_priority")
+        val DOLBY_VISION_CONVERSION = booleanPreferencesKey("dolby_vision_conversion")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val IMAGE_CACHE_ENABLED = booleanPreferencesKey("image_cache_enabled")
         val IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
@@ -428,6 +431,48 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
     override suspend fun setUseExoPlayer(value: Boolean) {
         dataStore.edit { preferences -> preferences[Keys.USE_EXO_PLAYER] = value }
+    }
+
+    override val videoDecoderPriority: Flow<DecoderPriority> =
+        dataStore.data
+            .catch { exception ->
+                if (exception is IOException) {
+                    emit(emptyPreferences())
+                } else {
+                    throw exception
+                }
+            }
+            .map { preferences ->
+                preferences[Keys.VIDEO_DECODER_PRIORITY]?.let { DecoderPriority.fromValue(it) }
+                    ?: DecoderPriority.default
+            }
+
+    override suspend fun setVideoDecoderPriority(value: DecoderPriority) {
+        dataStore.edit { preferences -> preferences[Keys.VIDEO_DECODER_PRIORITY] = value.value }
+    }
+
+    override suspend fun getVideoDecoderPriority(): DecoderPriority {
+        return dataStore.data.first()[Keys.VIDEO_DECODER_PRIORITY]
+            ?.let { DecoderPriority.fromValue(it) } ?: DecoderPriority.default
+    }
+
+    override val dolbyVisionConversion: Flow<Boolean> =
+        dataStore.data
+            .catch { exception ->
+                if (exception is IOException) {
+                    emit(emptyPreferences())
+                } else {
+                    throw exception
+                }
+            }
+            .map { preferences -> preferences[Keys.DOLBY_VISION_CONVERSION] ?: false }
+
+    override suspend fun setDolbyVisionConversion(value: Boolean) {
+        dataStore.edit { preferences -> preferences[Keys.DOLBY_VISION_CONVERSION] = value }
+    }
+
+    override suspend fun getDolbyVisionConversion(): Boolean {
+        return dataStore.data.first()[Keys.DOLBY_VISION_CONVERSION] ?: false
     }
 
     override suspend fun setMpvHwDec(hwDec: MpvHwDec) {
