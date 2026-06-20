@@ -48,7 +48,7 @@ internal object HevcHdr10PlusStripper {
                 nalSize = (nalSize shl 8) or (sample[pos + i].toInt() and 0xFF)
             }
             val nalStart = pos + nalLengthFieldLength
-            if (nalSize <= 0 || nalStart + nalSize > sampleLen) {
+            if (nalSize <= 0 || nalSize > sampleLen - nalStart) {
                 // Fallback: If length field parsing fails due to missing/corrupted CSD,
                 // perform an emergency Annex-B byte scan pass over this sample frame.
                 return stripHdr10PlusAnnexB(sample, sampleLen)
@@ -190,7 +190,7 @@ internal object HevcHdr10PlusStripper {
                 if (b != 0xFF) break
             }
 
-            if (pos + payloadSize > rbspEnd) return null // malformed; keep original
+            if (payloadSize > rbspEnd - pos) return null // malformed; keep original
             val payloadStart = pos
             pos += payloadSize
             val msgEnd = pos

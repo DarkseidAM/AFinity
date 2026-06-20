@@ -197,7 +197,7 @@ internal class DolbyVisionMatroskaTransformer(
             val nalSize = readLengthField(sample, offset, nalUnitLengthFieldLength)
             if (nalSize < 0) return false
             offset += nalUnitLengthFieldLength
-            if (offset + nalSize > sampleLength) return false
+            if (nalSize > sampleLength - offset) return false
             val nalType = if (nalSize >= 1) nalUnitTypeAt(sample, offset) else -1
             val layerId = nuhLayerIdAt(sample, offset, nalSize)
             when {

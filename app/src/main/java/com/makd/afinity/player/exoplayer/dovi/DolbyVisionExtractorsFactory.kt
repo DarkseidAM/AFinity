@@ -419,7 +419,7 @@ private class DolbyVisionTrackOutput(
                 nalSize = (nalSize shl 8) or (sample[pos + i].toInt() and 0xFF)
             }
             val nalStart = pos + lengthFieldLength
-            if (nalSize <= 0 || nalStart + nalSize > sampleLen) return -1
+            if (nalSize <= 0 || nalSize > sampleLen - nalStart) return -1
             val nalType = nalUnitTypeAt(sample, nalStart)
             val layerId = nuhLayerIdAt(sample, nalStart, nalSize)
             when {

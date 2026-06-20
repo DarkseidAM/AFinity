@@ -33,7 +33,7 @@ internal object HevcDvRpuStripper {
                 nalSize = (nalSize shl 8) or (sample[pos + i].toInt() and 0xFF)
             }
             val nalStart = pos + nalLengthFieldLength
-            if (nalSize <= 0 || nalStart + nalSize > sampleLen) return null
+            if (nalSize <= 0 || nalSize > sampleLen - nalStart) return null
             val nalType = (sample[nalStart].toInt() ushr 1) and 0x3F
             if (nalType == NAL_TYPE_DV_RPU || nalType == NAL_TYPE_DV_EL) {
                 // Drop this NAL entirely — don't write start code or payload
