@@ -5,6 +5,7 @@ import com.makd.afinity.data.models.common.SortBy
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
+import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.SubtitlePreferences
 import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.player.exoplayer.DecoderPriority
@@ -77,6 +78,30 @@ interface PreferencesRepository {
     suspend fun setDolbyVisionConversion(value: Boolean)
 
     suspend fun getDolbyVisionConversion(): Boolean
+
+    val cacheForwardSeconds: Flow<Int>
+
+    suspend fun setCacheForwardSeconds(value: Int)
+
+    suspend fun getCacheForwardSeconds(): Int
+
+    val cacheBackSeconds: Flow<Int>
+
+    suspend fun setCacheBackSeconds(value: Int)
+
+    suspend fun getCacheBackSeconds(): Int
+
+    val nextEpisodeThresholdMs: Flow<Int>
+
+    suspend fun setNextEpisodeThresholdMs(value: Int)
+
+    suspend fun getNextEpisodeThresholdMs(): Int
+
+    val segmentAutoSkipMode: Flow<SegmentAutoSkipMode>
+
+    suspend fun setSegmentAutoSkipMode(value: SegmentAutoSkipMode)
+
+    suspend fun getSegmentAutoSkipMode(): SegmentAutoSkipMode
 
     suspend fun setMpvHwDec(hwDec: MpvHwDec)
 

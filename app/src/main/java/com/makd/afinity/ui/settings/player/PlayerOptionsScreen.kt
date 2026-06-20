@@ -75,6 +75,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makd.afinity.R
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
+import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.MpvVideoOutput
 import com.makd.afinity.data.models.player.SubtitleHorizontalAlignment
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
@@ -235,6 +236,40 @@ fun PlayerOptionsScreen(
                             onCheckedChange = viewModel::toggleDolbyVisionConversion,
                         )
                     }
+                }
+            }
+
+            item {
+                SettingsGroup(
+                    title = stringResource(R.string.pref_group_buffering),
+                    modifier = Modifier.padding(bottom = 24.dp),
+                ) {
+                    SubtitleDropdownItem(
+                        title = stringResource(R.string.pref_cache_forward_title),
+                        selectedOption = uiState.cacheForwardSeconds,
+                        options = listOf(15, 30, 50, 120, 300),
+                        onValueChange = viewModel::setCacheForwardSeconds,
+                        labelProvider = { "${it}s" },
+                        icon = painterResource(id = R.drawable.ic_video_settings),
+                    )
+                    SettingsDivider()
+                    SubtitleDropdownItem(
+                        title = stringResource(R.string.pref_cache_back_title),
+                        selectedOption = uiState.cacheBackSeconds,
+                        options = listOf(0, 30, 60, 120),
+                        onValueChange = viewModel::setCacheBackSeconds,
+                        labelProvider = { if (it == 0) "Off" else "${it}s" },
+                        icon = painterResource(id = R.drawable.ic_video_settings),
+                    )
+                    SettingsDivider()
+                    SubtitleDropdownItem(
+                        title = stringResource(R.string.pref_segment_auto_skip_title),
+                        selectedOption = uiState.segmentAutoSkipMode,
+                        options = SegmentAutoSkipMode.entries.toList(),
+                        onValueChange = viewModel::setSegmentAutoSkipMode,
+                        labelProvider = { it.getDisplayName() },
+                        icon = painterResource(id = R.drawable.ic_player_play_filled),
+                    )
                 }
             }
 

@@ -9,6 +9,7 @@ import com.makd.afinity.data.models.common.EpisodeLayout
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
+import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.user.User
@@ -205,6 +206,24 @@ constructor(
         viewModelScope.launch {
             preferencesRepository.dolbyVisionConversion.collect {
                 _uiState.value = _uiState.value.copy(dolbyVisionConversion = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.cacheForwardSeconds.collect {
+                _uiState.value = _uiState.value.copy(cacheForwardSeconds = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.cacheBackSeconds.collect {
+                _uiState.value = _uiState.value.copy(cacheBackSeconds = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.segmentAutoSkipMode.collect {
+                _uiState.value = _uiState.value.copy(segmentAutoSkipMode = it)
             }
         }
 
@@ -462,6 +481,39 @@ constructor(
         }
     }
 
+    fun setCacheForwardSeconds(seconds: Int) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setCacheForwardSeconds(seconds)
+                Timber.d("Forward cache set to: ${seconds}s")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set forward cache")
+            }
+        }
+    }
+
+    fun setCacheBackSeconds(seconds: Int) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setCacheBackSeconds(seconds)
+                Timber.d("Back cache set to: ${seconds}s")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set back cache")
+            }
+        }
+    }
+
+    fun setSegmentAutoSkipMode(mode: SegmentAutoSkipMode) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setSegmentAutoSkipMode(mode)
+                Timber.d("Segment auto-skip mode set to: ${mode.getDisplayName()}")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set segment auto-skip mode")
+            }
+        }
+    }
+
     fun toggleDolbyVisionConversion(enabled: Boolean) {
         viewModelScope.launch {
             try {
@@ -703,6 +755,9 @@ data class SettingsUiState(
     val useExoPlayer: Boolean = true,
     val videoDecoderPriority: DecoderPriority = DecoderPriority.default,
     val dolbyVisionConversion: Boolean = false,
+    val cacheForwardSeconds: Int = 50,
+    val cacheBackSeconds: Int = 0,
+    val segmentAutoSkipMode: SegmentAutoSkipMode = SegmentAutoSkipMode.default,
     val logoAutoHide: Boolean = false,
     val defaultVideoZoomMode: VideoZoomMode = VideoZoomMode.FIT,
     val mpvHwDec: MpvHwDec = MpvHwDec.default,

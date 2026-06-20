@@ -14,6 +14,7 @@ import com.makd.afinity.data.models.common.SortBy
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
+import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.SubtitleHorizontalAlignment
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
 import com.makd.afinity.data.models.player.SubtitlePreferences
@@ -35,6 +36,12 @@ class PreferencesRepositoryImpl
 @Inject
 constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : PreferencesRepository {
 
+    private companion object Defaults {
+        const val DEFAULT_CACHE_FORWARD_SECONDS = 50
+        const val DEFAULT_CACHE_BACK_SECONDS = 0
+        const val DEFAULT_NEXT_EPISODE_THRESHOLD_MS = 5000
+    }
+
     private object Keys {
         val CURRENT_SERVER_ID = stringPreferencesKey("current_server_id")
         val CURRENT_USER_ID = stringPreferencesKey("current_user_id")
@@ -51,6 +58,10 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         val USE_EXO_PLAYER = booleanPreferencesKey("use_exo_player")
         val VIDEO_DECODER_PRIORITY = stringPreferencesKey("video_decoder_priority")
         val DOLBY_VISION_CONVERSION = booleanPreferencesKey("dolby_vision_conversion")
+        val CACHE_FORWARD_SECONDS = intPreferencesKey("cache_forward_seconds")
+        val CACHE_BACK_SECONDS = intPreferencesKey("cache_back_seconds")
+        val NEXT_EPISODE_THRESHOLD_MS = intPreferencesKey("next_episode_threshold_ms")
+        val SEGMENT_AUTO_SKIP_MODE = stringPreferencesKey("segment_auto_skip_mode")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val IMAGE_CACHE_ENABLED = booleanPreferencesKey("image_cache_enabled")
         val IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
@@ -473,6 +484,63 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
     override suspend fun getDolbyVisionConversion(): Boolean {
         return dataStore.data.first()[Keys.DOLBY_VISION_CONVERSION] ?: false
+    }
+
+    override val cacheForwardSeconds: Flow<Int> =
+        dataStore.data
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { it[Keys.CACHE_FORWARD_SECONDS] ?: DEFAULT_CACHE_FORWARD_SECONDS }
+
+    override suspend fun setCacheForwardSeconds(value: Int) {
+        dataStore.edit { it[Keys.CACHE_FORWARD_SECONDS] = value }
+    }
+
+    override suspend fun getCacheForwardSeconds(): Int {
+        return dataStore.data.first()[Keys.CACHE_FORWARD_SECONDS] ?: DEFAULT_CACHE_FORWARD_SECONDS
+    }
+
+    override val cacheBackSeconds: Flow<Int> =
+        dataStore.data
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { it[Keys.CACHE_BACK_SECONDS] ?: DEFAULT_CACHE_BACK_SECONDS }
+
+    override suspend fun setCacheBackSeconds(value: Int) {
+        dataStore.edit { it[Keys.CACHE_BACK_SECONDS] = value }
+    }
+
+    override suspend fun getCacheBackSeconds(): Int {
+        return dataStore.data.first()[Keys.CACHE_BACK_SECONDS] ?: DEFAULT_CACHE_BACK_SECONDS
+    }
+
+    override val nextEpisodeThresholdMs: Flow<Int> =
+        dataStore.data
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { it[Keys.NEXT_EPISODE_THRESHOLD_MS] ?: DEFAULT_NEXT_EPISODE_THRESHOLD_MS }
+
+    override suspend fun setNextEpisodeThresholdMs(value: Int) {
+        dataStore.edit { it[Keys.NEXT_EPISODE_THRESHOLD_MS] = value }
+    }
+
+    override suspend fun getNextEpisodeThresholdMs(): Int {
+        return dataStore.data.first()[Keys.NEXT_EPISODE_THRESHOLD_MS]
+            ?: DEFAULT_NEXT_EPISODE_THRESHOLD_MS
+    }
+
+    override val segmentAutoSkipMode: Flow<SegmentAutoSkipMode> =
+        dataStore.data
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { prefs ->
+                prefs[Keys.SEGMENT_AUTO_SKIP_MODE]?.let { SegmentAutoSkipMode.fromValue(it) }
+                    ?: SegmentAutoSkipMode.default
+            }
+
+    override suspend fun setSegmentAutoSkipMode(value: SegmentAutoSkipMode) {
+        dataStore.edit { it[Keys.SEGMENT_AUTO_SKIP_MODE] = value.value }
+    }
+
+    override suspend fun getSegmentAutoSkipMode(): SegmentAutoSkipMode {
+        return dataStore.data.first()[Keys.SEGMENT_AUTO_SKIP_MODE]
+            ?.let { SegmentAutoSkipMode.fromValue(it) } ?: SegmentAutoSkipMode.default
     }
 
     override suspend fun setMpvHwDec(hwDec: MpvHwDec) {

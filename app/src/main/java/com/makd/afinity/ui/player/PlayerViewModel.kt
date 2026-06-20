@@ -20,8 +20,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import com.makd.afinity.R
@@ -40,6 +42,7 @@ import com.makd.afinity.data.models.media.AfinitySource
 import com.makd.afinity.data.models.media.AfinitySourceType
 import com.makd.afinity.data.models.player.GestureConfig
 import com.makd.afinity.data.models.player.PlayerEvent
+import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
 import com.makd.afinity.data.models.player.SubtitlePreferences
 import com.makd.afinity.data.models.player.Trickplay
@@ -112,6 +115,7 @@ constructor(
     private var speedBeforeLongPress: Float? = null
     private var currentMediaSegments: List<AfinitySegment> = emptyList()
     private var segmentCheckingJob: Job? = null
+    private var autoSkippedSegment: AfinitySegment? = null
 
     private var progressReportingJob: Job? = null
     private var pendingMainItemOptions: MainItemPlaybackOptions? = null
@@ -405,13 +409,47 @@ constructor(
         val mediaSourceFactory =
             androidx.media3.exoplayer.source.DefaultMediaSourceFactory(context, extractorsFactory)
 
+        val (cacheForwardSecs, cacheBackSecs) =
+            kotlinx.coroutines.runBlocking {
+                Pair(
+                    preferencesRepository.getCacheForwardSeconds(),
+                    preferencesRepository.getCacheBackSeconds(),
+                )
+            }
+        Timber.d("ExoPlayer cache: forward=${cacheForwardSecs}s back=${cacheBackSecs}s")
+        val loadControl = buildLoadControl(cacheForwardSecs, cacheBackSecs)
+
         return ExoPlayer.Builder(context, renderersFactory)
             .setAudioAttributes(audioAttributes, true)
             .setTrackSelector(trackSelector)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setSeekBackIncrementMs(10000)
             .setSeekForwardIncrementMs(10000)
             .setPauseAtEndOfMediaItems(true)
+            .build()
+    }
+
+    /**
+     * Builds a [DefaultLoadControl] from the user's forward/back cache preferences (seconds).
+     * Forward seconds map to the max buffer duration; back seconds to the back buffer.
+     */
+    private fun buildLoadControl(forwardSeconds: Int, backSeconds: Int): LoadControl {
+        val forwardMs = forwardSeconds * 1000
+        val backMs = backSeconds * 1000
+        val minMs = maxOf(
+            DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            minOf(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, forwardMs),
+        )
+        val maxMs = maxOf(forwardMs, minMs)
+        return DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                minMs,
+                maxMs,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            )
+            .setBackBuffer(backMs, /* retainBackBufferFromKeyframe = */ true)
             .build()
     }
 
@@ -458,6 +496,22 @@ constructor(
                 .setAudioOutput(mpvAudioOutput)
                 .setHwDec(mpvHwDec)
                 .build()
+
+        // User-configurable cache (seconds). mpv forward is time-native (demuxer-readahead-secs);
+        // back has no seconds cap, so derive bytes from seconds at a nominal ~1.5 MiB/s.
+        val (mpvCacheForwardSecs, mpvCacheBackSecs) =
+            kotlinx.coroutines.runBlocking {
+                Pair(
+                    preferencesRepository.getCacheForwardSeconds(),
+                    preferencesRepository.getCacheBackSeconds(),
+                )
+            }
+        val mpvForwardMiB = maxOf(32, mpvCacheForwardSecs * 3 / 2)
+        val mpvBackMiB = maxOf(0, mpvCacheBackSecs * 3 / 2)
+        Timber.d("MPV cache: forward=${mpvCacheForwardSecs}s (${mpvForwardMiB}MiB) back=${mpvCacheBackSecs}s (${mpvBackMiB}MiB)")
+        mpvPlayer.setOption("demuxer-readahead-secs", mpvCacheForwardSecs.toString())
+        mpvPlayer.setOption("demuxer-max-bytes", "${mpvForwardMiB}MiB")
+        mpvPlayer.setOption("demuxer-max-back-bytes", "${mpvBackMiB}MiB")
 
         mpvPlayer.setOption("sub-ass-override", "strip")
         mpvPlayer.setOption("sub-use-margins", "yes")
@@ -1423,6 +1477,21 @@ constructor(
                 }
 
             if (shouldShowSkipButton) {
+                val autoSkipMode = preferencesRepository.getSegmentAutoSkipMode()
+                val shouldAutoSkip =
+                    when (autoSkipMode) {
+                        SegmentAutoSkipMode.ALWAYS -> true
+                        SegmentAutoSkipMode.PIP_ONLY -> uiState.value.isInPictureInPictureMode
+                        SegmentAutoSkipMode.OFF -> false
+                    }
+
+                if (shouldAutoSkip && autoSkippedSegment != segment) {
+                    autoSkippedSegment = segment
+                    Timber.d("Auto-skipping segment ${segment.type} (mode=$autoSkipMode)")
+                    handlePlayerEvent(PlayerEvent.SkipSegment(segment))
+                    return
+                }
+
                 val skipButtonText = getSkipButtonText(segment)
                 updateUiState {
                     it.copy(
@@ -1434,7 +1503,10 @@ constructor(
             } else {
                 updateUiState { it.copy(currentSegment = null, showSkipButton = false) }
             }
-        } ?: run { updateUiState { it.copy(currentSegment = null, showSkipButton = false) } }
+        } ?: run {
+            autoSkippedSegment = null
+            updateUiState { it.copy(currentSegment = null, showSkipButton = false) }
+        }
     }
 
     private fun getSkipButtonText(segment: AfinitySegment): String {
