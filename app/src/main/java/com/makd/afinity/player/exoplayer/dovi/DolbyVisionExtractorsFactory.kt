@@ -273,7 +273,8 @@ private class DolbyVisionTrackOutput(
         val need = pendingLen + extra
         if (pendingBuf.size < need) {
             var newSize = if (pendingBuf.isEmpty()) 16 * 1024 else pendingBuf.size
-            while (newSize < need) newSize = newSize shl 1
+            while (newSize < need && newSize > 0) newSize = newSize shl 1
+            if (newSize <= 0) newSize = need
             pendingBuf = pendingBuf.copyOf(newSize)
         }
     }
@@ -281,7 +282,8 @@ private class DolbyVisionTrackOutput(
     private fun ensureInputScratch(size: Int) {
         if (inputScratch.size < size) {
             var newSize = if (inputScratch.isEmpty()) 16 * 1024 else inputScratch.size
-            while (newSize < size) newSize = newSize shl 1
+            while (newSize < size && newSize > 0) newSize = newSize shl 1
+            if (newSize <= 0) newSize = size
             inputScratch = ByteArray(newSize)
         }
     }
@@ -294,7 +296,8 @@ private class DolbyVisionTrackOutput(
         val need = outLen + extra
         if (outBuf.size < need) {
             var newSize = if (outBuf.isEmpty()) 16 * 1024 else outBuf.size
-            while (newSize < need) newSize = newSize shl 1
+            while (newSize < need && newSize > 0) newSize = newSize shl 1
+            if (newSize <= 0) newSize = need
             outBuf = outBuf.copyOf(newSize)
         }
     }
@@ -590,7 +593,8 @@ internal class Hdr10StrippingTrackOutput(
         val need = pendingLen + extra
         if (pendingBuf.size < need) {
             var sz = if (pendingBuf.isEmpty()) 16 * 1024 else pendingBuf.size
-            while (sz < need) sz = sz shl 1
+            while (sz < need && sz > 0) sz = sz shl 1
+            if (sz <= 0) sz = need
             pendingBuf = pendingBuf.copyOf(sz)
         }
     }
@@ -598,7 +602,8 @@ internal class Hdr10StrippingTrackOutput(
     private fun ensureInputScratch(size: Int) {
         if (inputScratch.size < size) {
             var sz = if (inputScratch.isEmpty()) 16 * 1024 else inputScratch.size
-            while (sz < size) sz = sz shl 1
+            while (sz < size && sz > 0) sz = sz shl 1
+            if (sz <= 0) sz = size
             inputScratch = ByteArray(sz)
         }
     }
@@ -733,7 +738,8 @@ internal class Hdr10PlusStrippingTrackOutput(
         val need = pendingLen + extra
         if (pendingBuf.size < need) {
             var sz = if (pendingBuf.isEmpty()) 16 * 1024 else pendingBuf.size
-            while (sz < need) sz = sz shl 1
+            while (sz < need && sz > 0) sz = sz shl 1
+            if (sz <= 0) sz = need
             pendingBuf = pendingBuf.copyOf(sz)
         }
     }
@@ -741,7 +747,8 @@ internal class Hdr10PlusStrippingTrackOutput(
     private fun ensureInputScratch(size: Int) {
         if (inputScratch.size < size) {
             var sz = if (inputScratch.isEmpty()) 16 * 1024 else inputScratch.size
-            while (sz < size) sz = sz shl 1
+            while (sz < size && sz > 0) sz = sz shl 1
+            if (sz <= 0) sz = size
             inputScratch = ByteArray(sz)
         }
     }
