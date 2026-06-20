@@ -46,6 +46,7 @@ import com.makd.afinity.data.models.player.SegmentAutoSkipMode
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
 import com.makd.afinity.data.models.player.SubtitlePreferences
 import com.makd.afinity.data.models.player.Trickplay
+import com.makd.afinity.data.models.player.VideoMetadata
 import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.JellyfinRepository
@@ -1676,6 +1677,23 @@ constructor(
         }
     }
 
+    fun togglePlaybackInfo() {
+        updateUiState { it.copy(showPlaybackInfo = !it.showPlaybackInfo) }
+    }
+
+    /** Diagnostics for the stats overlay, built from the active source + runtime backend. */
+    fun buildPlaybackInfo(): VideoMetadata? {
+        val item = uiState.value.currentItem ?: return null
+        val source =
+            item.sources.firstOrNull { it.id == uiState.value.currentMediaSourceId }
+                ?: item.sources.firstOrNull()
+                ?: return null
+        val backend = if (player is MPVPlayer) "MPV (libmpv)" else "ExoPlayer"
+        val decoder =
+            (player as? ExoPlayer)?.videoFormat?.let { it.codecs ?: it.sampleMimeType } ?: "—"
+        return VideoMetadata.from(source.mediaStreams, backend, decoder)
+    }
+
     fun onDoubleTapSeek(isForward: Boolean) {
         val delta = if (isForward) 10000L else -10000L
         handlePlayerEvent(PlayerEvent.SeekRelative(delta))
@@ -2017,6 +2035,7 @@ constructor(
         val currentMediaSourceId: String? = null,
         val showVersionPicker: Boolean = false,
         val isPlayingIntro: Boolean = false,
+        val showPlaybackInfo: Boolean = false,
     )
 
     data class MainItemPlaybackOptions(

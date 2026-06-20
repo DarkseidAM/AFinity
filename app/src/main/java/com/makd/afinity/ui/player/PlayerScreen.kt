@@ -48,6 +48,12 @@ import com.makd.afinity.ui.player.components.PlayerControls
 import com.makd.afinity.ui.player.components.PlayerIndicators
 import com.makd.afinity.ui.player.components.TrickplayPreview
 import com.makd.afinity.ui.player.components.VersionPickerSheet
+import com.makd.afinity.ui.player.components.PlaybackInfoOverlay
+import com.makd.afinity.R
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.res.painterResource
 import com.makd.afinity.ui.player.utils.KeepScreenOn
 import com.makd.afinity.ui.player.utils.PlayerSystemBarsController
 import com.makd.afinity.ui.player.utils.ScreenBrightnessController
@@ -290,6 +296,33 @@ fun PlayerScreen(
                 onJumpToEpisode = viewModel::jumpToEpisode,
                 onVersionToggleRequest = { showVersionPicker = !showVersionPicker },
             )
+
+            if (uiState.showControls && !uiState.isInPictureInPictureMode) {
+                IconButton(
+                    onClick = { viewModel.togglePlaybackInfo() },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 72.dp, end = 16.dp)
+                        .size(36.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_info),
+                        contentDescription = "Playback info",
+                        tint = if (uiState.showPlaybackInfo) Color.White else Color.White.copy(alpha = 0.6f),
+                    )
+                }
+            }
+
+            if (uiState.showPlaybackInfo && !uiState.isInPictureInPictureMode) {
+                viewModel.buildPlaybackInfo()?.let { info ->
+                    PlaybackInfoOverlay(
+                        info = info,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 72.dp, start = 16.dp),
+                    )
+                }
+            }
 
             TrickplayPreview(
                 isVisible = uiState.showTrickplayPreview,
