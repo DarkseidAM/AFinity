@@ -24,7 +24,7 @@ object DoviBridge {
     )
 
     private val nativeLoaded: Boolean by lazy { loadNativeLibrary() }
-    private var cachedSelfTestResult: SelfTestResult? = null
+    @Volatile private var cachedSelfTestResult: SelfTestResult? = null
     private val conversionCallCount = AtomicLong(0L)
     private val conversionSuccessCount = AtomicLong(0L)
 

@@ -49,9 +49,11 @@ internal object HevcHdr10PlusStripper {
             }
             val nalStart = pos + nalLengthFieldLength
             if (nalSize <= 0 || nalSize > sampleLen - nalStart) {
-                // Fallback: If length field parsing fails due to missing/corrupted CSD,
-                // perform an emergency Annex-B byte scan pass over this sample frame.
-                return stripHdr10PlusAnnexB(sample, sampleLen)
+                // Length-field parsing failed (missing/corrupted CSD). Do NOT run an Annex-B
+                // start-code scan on a length-delimited sample: length prefixes and payload
+                // bytes can be misread as start codes and corrupt the bitstream. Pass the
+                // sample through unmodified instead.
+                return null
             }
             val nalType = (sample[nalStart].toInt() ushr 1) and 0x3F
             if (nalType == NAL_TYPE_PREFIX_SEI || nalType == NAL_TYPE_SUFFIX_SEI) {
