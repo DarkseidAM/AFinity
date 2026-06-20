@@ -48,14 +48,18 @@ import java.io.IOException;
                 ? SEARCH_LENGTH
                 : inputLength);
     // Find four bytes equal to ID_EBML near the start of the input.
-    input.peekFully(scratch.getData(), 0, 4);
+    if (!input.peekFully(scratch.getData(), 0, 4, /* allowEndOfInput= */ true)) {
+      return false;
+    }
     long tag = scratch.readUnsignedInt();
     peekLength = 4;
     while (tag != ID_EBML) {
       if (++peekLength == bytesToSearch) {
         return false;
       }
-      input.peekFully(scratch.getData(), 0, 1);
+      if (!input.peekFully(scratch.getData(), 0, 1, /* allowEndOfInput= */ true)) {
+        return false;
+      }
       tag = (tag << 8) & 0xFFFFFF00;
       tag |= scratch.getData()[0] & 0xFF;
     }

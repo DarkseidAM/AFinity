@@ -117,7 +117,9 @@ internal class DolbyVisionMatroskaTransformer(
             scratch.write(sample, 0, sampleLength)
         }
         if (!appendLengthDelimitedNalToScratch(convertedBlockAdditional, nalUnitLengthFieldLength)) {
-            return null
+            // Appending the converted RPU failed; fall back to the original sample (HDR10+
+            // stripped if enabled) so playback continues instead of returning a null sample.
+            return stripHdr10PlusIfEnabled(sample, sampleLength, nalUnitLengthFieldLength) ?: sample
         }
         val dvResult = finishScratch()
         return stripHdr10PlusIfEnabled(dvResult, lastTransformedLength, nalUnitLengthFieldLength) ?: dvResult
@@ -256,15 +258,12 @@ internal class DolbyVisionMatroskaTransformer(
     }
 
     private fun downgradeDolbyVisionCodecStringToHevc(codecs: String?): String? {
-        val raw = codecs?.trim().orEmpty()
-        if (raw.isEmpty()) return null
-        val parts = raw.split('.').toMutableList()
-        if (parts.size < 2) return null
-        return when (parts[0].lowercase()) {
-            "dvhe" -> { parts[0] = "hvc1"; parts.joinToString(".") }
-            "dvh1" -> { parts[0] = "hev1"; parts.joinToString(".") }
-            else -> null
-        }
+        if (codecs.isNullOrBlank()) return null
+        // A prefix-only swap (dvhe.08.06 -> hvc1.08.06) produces an invalid HEVC codec string.
+        // Emit a standard HEVC Main10 string, matching Hdr10StrippingTrackOutput.stripDvCodecString.
+        return Regex("(?i)(dvhe|dvh1)\\.[0-9]+\\.[0-9]+")
+            .replace(codecs.trim()) { "hvc1.2.4.L153.B0" }
+            .takeIf { it != codecs }
     }
 
     private fun resolveProfile(codecs: String?, configBytes: ByteArray?): Int? {
