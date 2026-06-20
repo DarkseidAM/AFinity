@@ -504,8 +504,12 @@ constructor(@param:AppPreferences private val dataStore: DataStore<Preferences>)
     }
 
     override suspend fun getVideoDecoderPriority(): DecoderPriority {
-        return dataStore.data.first()[Keys.VIDEO_DECODER_PRIORITY]
-            ?.let { DecoderPriority.fromValue(it) } ?: DecoderPriority.default
+        return try {
+            dataStore.data.first()[Keys.VIDEO_DECODER_PRIORITY]
+                ?.let { DecoderPriority.fromValue(it) } ?: DecoderPriority.default
+        } catch (e: IOException) {
+            DecoderPriority.default
+        }
     }
 
     override val dolbyVisionConversion: Flow<Boolean> =
@@ -518,7 +522,11 @@ constructor(@param:AppPreferences private val dataStore: DataStore<Preferences>)
     }
 
     override suspend fun getDolbyVisionConversion(): Boolean {
-        return dataStore.data.first()[Keys.DOLBY_VISION_CONVERSION] ?: false
+        return try {
+            dataStore.data.first()[Keys.DOLBY_VISION_CONVERSION] ?: false
+        } catch (e: IOException) {
+            false
+        }
     }
 
     override suspend fun setMpvHwDec(hwDec: MpvHwDec) {
