@@ -247,6 +247,18 @@ constructor(
         }
 
         viewModelScope.launch {
+            preferencesRepository.videoDecoderPriority.collect {
+                _uiState.value = _uiState.value.copy(videoDecoderPriority = it)
+            }
+        }
+
+        viewModelScope.launch {
+            preferencesRepository.dolbyVisionConversion.collect {
+                _uiState.value = _uiState.value.copy(dolbyVisionConversion = it)
+            }
+        }
+
+        viewModelScope.launch {
             preferencesRepository.getPipGestureEnabledFlow().collect {
                 _uiState.value = _uiState.value.copy(pipGestureEnabled = it)
             }
@@ -389,6 +401,26 @@ constructor(
                 Timber.d("PIP background play set to: $enabled")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to toggle PIP background play")
+            }
+        }
+    }
+
+    fun setVideoDecoderPriority(priority: com.makd.afinity.player.exoplayer.DecoderPriority) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setVideoDecoderPriority(priority)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set video decoder priority")
+            }
+        }
+    }
+
+    fun toggleDolbyVisionConversion(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setDolbyVisionConversion(enabled)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set Dolby Vision conversion")
             }
         }
     }
@@ -950,6 +982,9 @@ data class SettingsUiState(
     val skipIntroMode: SkipMode = SkipMode.BUTTON,
     val skipOutroMode: SkipMode = SkipMode.BUTTON,
     val useExoPlayer: Boolean = true,
+    val videoDecoderPriority: com.makd.afinity.player.exoplayer.DecoderPriority =
+        com.makd.afinity.player.exoplayer.DecoderPriority.default,
+    val dolbyVisionConversion: Boolean = false,
     val logoAutoHide: Boolean = false,
     val defaultVideoZoomMode: VideoZoomMode = VideoZoomMode.FIT,
     val mpvHwDec: MpvHwDec = MpvHwDec.default,

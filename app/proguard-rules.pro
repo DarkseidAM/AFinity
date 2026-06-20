@@ -23,3 +23,12 @@
 # Google Cast SDK
 -keep class com.google.android.gms.cast.** { *; }
 -keep class com.makd.afinity.cast.CastOptionsProvider { *; }
+
+# Dolby Vision JNI bridge: native method + class names must survive R8 so the
+# libdovi_bridge.so JNI lookup (resolved by mangled name) still binds.
+-keep class com.makd.afinity.player.exoplayer.dovi.DoviBridge {
+    native <methods>;
+}
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

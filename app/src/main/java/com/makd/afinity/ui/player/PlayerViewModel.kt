@@ -492,12 +492,29 @@ constructor(
                 .setUpstreamDataSourceFactory(upstreamFactory)
                 .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-        val mediaSourceFactory =
-            DefaultMediaSourceFactory(context).setDataSourceFactory(cacheDataSourceFactory)
+        val dolbyVisionConversion = preferencesRepository.getDolbyVisionConversion()
+        val extractorsFactory: androidx.media3.extractor.ExtractorsFactory =
+            if (dolbyVisionConversion) {
+                Timber.d("Dolby Vision 7->8.1 conversion enabled")
+                com.makd.afinity.player.exoplayer.dovi.DolbyVisionExtractorsFactory(
+                    delegate = androidx.media3.extractor.DefaultExtractorsFactory(),
+                    config = com.makd.afinity.player.exoplayer.dovi.DolbyVisionConversionConfig(
+                        active = true,
+                        manualDv81 = true,
+                    ),
+                )
+            } else {
+                androidx.media3.extractor.DefaultExtractorsFactory()
+            }
 
+        val mediaSourceFactory =
+            DefaultMediaSourceFactory(context, extractorsFactory)
+                .setDataSourceFactory(cacheDataSourceFactory)
+
+        val decoderPriority = preferencesRepository.getVideoDecoderPriority()
+        Timber.d("ExoPlayer decoder priority: $decoderPriority")
         val renderersFactory =
-            DefaultRenderersFactory(context)
-                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            com.makd.afinity.player.exoplayer.AfinityRenderersFactory(context, decoderPriority)
 
         return ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)

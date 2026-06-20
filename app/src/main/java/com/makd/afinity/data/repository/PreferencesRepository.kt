@@ -7,6 +7,7 @@ import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
 import com.makd.afinity.data.models.player.SkipMode
 import com.makd.afinity.data.models.player.SubtitlePreferences
+import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.player.VideoZoomMode
 import kotlinx.coroutines.flow.Flow
 
@@ -65,6 +66,18 @@ interface PreferencesRepository {
     val useExoPlayer: Flow<Boolean>
 
     suspend fun setUseExoPlayer(value: Boolean)
+
+    val videoDecoderPriority: Flow<DecoderPriority>
+
+    suspend fun setVideoDecoderPriority(value: DecoderPriority)
+
+    suspend fun getVideoDecoderPriority(): DecoderPriority
+
+    val dolbyVisionConversion: Flow<Boolean>
+
+    suspend fun setDolbyVisionConversion(value: Boolean)
+
+    suspend fun getDolbyVisionConversion(): Boolean
 
     suspend fun setMpvHwDec(hwDec: MpvHwDec)
 
