@@ -23,10 +23,12 @@ enum class DecoderPriority(val value: String) {
             entries.firstOrNull { it.value == value } ?: default
     }
 
-    fun getDisplayName(): String =
+    fun getDisplayName(context: android.content.Context): String =
         when (this) {
-            AUTO -> "Auto (hardware, then software)"
-            PREFER_SOFTWARE -> "Prefer software"
-            PREFER_HARDWARE -> "Force hardware"
+            AUTO -> context.getString(com.makd.afinity.R.string.decoder_priority_auto)
+            PREFER_SOFTWARE ->
+                context.getString(com.makd.afinity.R.string.decoder_priority_prefer_software)
+            PREFER_HARDWARE ->
+                context.getString(com.makd.afinity.R.string.decoder_priority_force_hardware)
         }
 }

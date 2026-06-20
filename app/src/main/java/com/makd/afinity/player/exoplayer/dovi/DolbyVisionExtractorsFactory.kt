@@ -66,7 +66,7 @@ internal class DolbyVisionExtractorsFactory(
         // Matroska: the DV7 RPU rides in BlockAdditional, which the stock
         // MatroskaExtractor discards before any TrackOutput. Swap it for the
         // vendored extractor that surfaces the RPU through a transformer.
-        if (extractor.javaClass.name == STOCK_MATROSKA_EXTRACTOR) {
+        if (extractor is androidx.media3.extractor.mkv.MatroskaExtractor) {
             return DvMatroskaExtractor(
                 DefaultSubtitleParserFactory(),
                 /* flags= */ 0,
@@ -81,20 +81,15 @@ internal class DolbyVisionExtractorsFactory(
         return DolbyVisionExtractor(extractor, config, nalFormat, stripDvRpu, stripHdr10PlusSei)
     }
 
-    private fun nalFormatFor(extractor: Extractor): NalFormat? {
-        val name = extractor.javaClass.name
-        return when {
-            // RPU is in-band in the sample for these containers, so reachable here.
-            name.contains("FragmentedMp4Extractor") -> NalFormat.LENGTH_DELIMITED
-            name.contains("Mp4Extractor") -> NalFormat.LENGTH_DELIMITED
-            name.contains("TsExtractor") -> NalFormat.ANNEX_B
+    // Type-safe (R8-obfuscation-safe) container detection. RPU is in-band in the sample
+    // for these containers, so reachable at the TrackOutput.
+    private fun nalFormatFor(extractor: Extractor): NalFormat? =
+        when (extractor) {
+            is androidx.media3.extractor.mp4.FragmentedMp4Extractor -> NalFormat.LENGTH_DELIMITED
+            is androidx.media3.extractor.mp4.Mp4Extractor -> NalFormat.LENGTH_DELIMITED
+            is androidx.media3.extractor.ts.TsExtractor -> NalFormat.ANNEX_B
             else -> null
         }
-    }
-
-    private companion object {
-        const val STOCK_MATROSKA_EXTRACTOR = "androidx.media3.extractor.mkv.MatroskaExtractor"
-    }
 }
 
 /** How HEVC NAL units are framed in the sample stream for a given container. */

@@ -23,7 +23,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="$REPO_ROOT/app/libs/nextlib-media3ext-nxstatic-${NEXTLIB_VERSION}.aar"
 
 # Locate the Maven AAR in the Gradle cache (resolve it once via a build if absent).
-AAR="$(find "$HOME/.gradle/caches" -name "nextlib-media3ext-${NEXTLIB_VERSION}.aar" 2>/dev/null | head -1)"
+GRADLE_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+AAR="$(find "$GRADLE_HOME/caches" -name "nextlib-media3ext-${NEXTLIB_VERSION}.aar" 2>/dev/null | head -1)"
 [ -n "$AAR" ] || {
   echo "Maven AAR not in Gradle cache. Temporarily add"
   echo "  implementation(\"io.github.anilbeesetti:nextlib-media3ext:${NEXTLIB_VERSION}\")"

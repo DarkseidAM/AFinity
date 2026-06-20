@@ -251,7 +251,7 @@ fun PlayerOptionsScreen(
                             selectedOption = uiState.videoDecoderPriority,
                             options = DecoderPriority.entries.toList(),
                             onValueChange = viewModel::setVideoDecoderPriority,
-                            labelProvider = { it.getDisplayName() },
+                            labelProvider = { it.getDisplayName(context) },
                             icon = painterResource(id = R.drawable.ic_cpu),
                         )
                         SettingsDivider()

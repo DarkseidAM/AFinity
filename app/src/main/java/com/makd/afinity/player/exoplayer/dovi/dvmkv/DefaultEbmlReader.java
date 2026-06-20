@@ -249,7 +249,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     while (trimmedLength > 0 && stringBytes[trimmedLength - 1] == 0) {
       trimmedLength--;
     }
-    return new String(stringBytes, 0, trimmedLength);
+    return new String(stringBytes, 0, trimmedLength, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   /**

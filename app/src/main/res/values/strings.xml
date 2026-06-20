@@ -511,12 +511,11 @@
     <string name="pref_group_engine">Engine &amp; Behavior</string>
     <string name="pref_use_exoplayer_title">Use ExoPlayer</string>
     <string name="pref_use_exoplayer_summary">Uses LibMPV when disabled</string>
-    <string name="pref_group_buffering">Buffering</string>
-    <string name="pref_cache_forward_title">Forward Cache</string>
-    <string name="pref_cache_back_title">Back Cache</string>
-    <string name="pref_segment_auto_skip_title">Auto-skip Segments</string>
     <string name="pref_group_exoplayer">ExoPlayer Options</string>
     <string name="pref_decoder_priority_title">Video Decoder</string>
+    <string name="decoder_priority_auto">Auto (hardware, then software)</string>
+    <string name="decoder_priority_prefer_software">Prefer software</string>
+    <string name="decoder_priority_force_hardware">Force hardware</string>
     <string name="pref_dolby_vision_title">Dolby Vision Conversion (experimental)</string>
     <string name="pref_dolby_vision_summary">Convert Dolby Vision profile 7 to 8.1 for HDR playback</string>
     <string name="pref_group_mpv">MPV Options</string>
