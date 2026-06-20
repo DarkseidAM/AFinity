@@ -1,5 +1,6 @@
 package com.makd.afinity.data.network
 
+import com.makd.afinity.data.models.audiobookshelf.AbsCoverSearchResult
 import com.makd.afinity.data.models.audiobookshelf.AudiobookshelfUser
 import com.makd.afinity.data.models.audiobookshelf.AuthorizeResponse
 import com.makd.afinity.data.models.audiobookshelf.BatchLocalSessionRequest
@@ -10,9 +11,11 @@ import com.makd.afinity.data.models.audiobookshelf.ItemsInProgressResponse
 import com.makd.afinity.data.models.audiobookshelf.LibrariesResponse
 import com.makd.afinity.data.models.audiobookshelf.LibraryItemsResponse
 import com.makd.afinity.data.models.audiobookshelf.LibraryResponse
+import com.makd.afinity.data.models.audiobookshelf.LibraryStats
+import com.makd.afinity.data.models.audiobookshelf.ListeningSessionsResponse
+import com.makd.afinity.data.models.audiobookshelf.ListeningStats
 import com.makd.afinity.data.models.audiobookshelf.LoginRequest
 import com.makd.afinity.data.models.audiobookshelf.LoginResponse
-import com.makd.afinity.data.models.audiobookshelf.MediaProgress
 import com.makd.afinity.data.models.audiobookshelf.MediaProgressSyncData
 import com.makd.afinity.data.models.audiobookshelf.PersonalizedView
 import com.makd.afinity.data.models.audiobookshelf.PlaybackSession
@@ -20,6 +23,7 @@ import com.makd.afinity.data.models.audiobookshelf.PlaybackSessionRequest
 import com.makd.afinity.data.models.audiobookshelf.ProgressUpdateRequest
 import com.makd.afinity.data.models.audiobookshelf.SearchResponse
 import com.makd.afinity.data.models.audiobookshelf.SeriesListResponse
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -71,6 +75,7 @@ interface AudiobookshelfApiService {
     suspend fun getPersonalized(
         @Path("libraryId") id: String,
         @Query("limit") limit: Int? = null,
+        @Query("minified") minified: Int? = null,
         @Query("include") include: String? = null,
     ): Response<List<PersonalizedView>>
 
@@ -81,17 +86,37 @@ interface AudiobookshelfApiService {
         @Query("limit") limit: Int? = null,
     ): Response<SearchResponse>
 
+    @GET("api/search/covers")
+    suspend fun searchCovers(
+        @Query("title") title: String,
+        @Query("author") author: String? = null,
+        @Query("provider") provider: String = "audible",
+        @Query("region") region: String? = null,
+    ): Response<List<AbsCoverSearchResult>>
+
     @GET("api/items/{itemId}")
     suspend fun getItem(
         @Path("itemId") id: String,
         @Query("expanded") expanded: Int = 1,
         @Query("include") include: String? = "progress",
+        @Query("episode") episode: String? = null,
     ): Response<ItemResponse>
+
+    @GET("api/libraries/{libraryId}/stats")
+    suspend fun getLibraryStats(@Path("libraryId") libraryId: String): Response<LibraryStats>
 
     @GET("api/libraries/{libraryId}/filterdata")
     suspend fun getFilterData(@Path("libraryId") libraryId: String): Response<FilterDataResponse>
 
     @GET("api/me") suspend fun getMe(): Response<AudiobookshelfUser>
+
+    @GET("api/me/listening-stats") suspend fun getListeningStats(): Response<ListeningStats>
+
+    @GET("api/me/listening-sessions")
+    suspend fun getListeningSessions(
+        @Query("itemsPerPage") itemsPerPage: Int = 15,
+        @Query("page") page: Int = 0,
+    ): Response<ListeningSessionsResponse>
 
     @GET("api/me/items-in-progress")
     suspend fun getItemsInProgress(
@@ -102,14 +127,14 @@ interface AudiobookshelfApiService {
     suspend fun updateProgress(
         @Path("itemId") id: String,
         @Body progress: ProgressUpdateRequest,
-    ): Response<MediaProgress>
+    ): Response<ResponseBody>
 
     @PATCH("api/me/progress/{itemId}/{episodeId}")
     suspend fun updateEpisodeProgress(
         @Path("itemId") itemId: String,
         @Path("episodeId") episodeId: String,
         @Body progress: ProgressUpdateRequest,
-    ): Response<MediaProgress>
+    ): Response<ResponseBody>
 
     @POST("api/items/{itemId}/play")
     suspend fun startPlaybackSession(

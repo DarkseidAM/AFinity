@@ -1,13 +1,11 @@
 package com.makd.afinity.data.models.extensions
 
 import androidx.core.net.toUri
-import com.makd.afinity.data.models.common.CollectionType
 import com.makd.afinity.data.models.livetv.AfinityChannel
 import com.makd.afinity.data.models.livetv.AfinityProgram
 import com.makd.afinity.data.models.livetv.ChannelType
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityChapter
-import com.makd.afinity.data.models.media.AfinityCollection
 import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityExternalUrl
 import com.makd.afinity.data.models.media.AfinityFolder
@@ -69,8 +67,7 @@ private fun BaseItemDto.toAfinitySources(baseUrl: String): List<AfinitySource> =
                         isExternal = mediaStream.isExternal,
                         path =
                             if (
-                                mediaStream.isExternal &&
-                                    !mediaStream.deliveryUrl.isNullOrBlank()
+                                mediaStream.isExternal && !mediaStream.deliveryUrl.isNullOrBlank()
                             ) {
                                 baseUrl + mediaStream.deliveryUrl
                             } else {
@@ -84,6 +81,9 @@ private fun BaseItemDto.toAfinitySources(baseUrl: String): List<AfinitySource> =
                         index = mediaStream.index,
                         channels = mediaStream.channels,
                         isDefault = mediaStream.isDefault,
+                        isForced = mediaStream.isForced,
+                        isHearingImpaired = mediaStream.isHearingImpaired,
+                        profile = mediaStream.profile,
                     )
                 } ?: emptyList(),
         )
@@ -119,9 +119,7 @@ fun BaseItemDto.toAfinityMovie(baseUrl: String): AfinityMovie {
         trickplayInfo =
             trickplay
                 ?.flatMap { (_, widthMap) ->
-                    widthMap.map { (width, info) ->
-                        width.toString() to info.toAfinityTrickplayInfo()
-                    }
+                    widthMap.map { (width, info) -> width to info.toAfinityTrickplayInfo() }
                 }
                 ?.toMap(),
         providerIds = providerIds?.mapNotNull { (key, value) -> value?.let { key to it } }?.toMap(),
@@ -237,6 +235,9 @@ fun BaseItemDto.toAfinityEpisode(baseUrl: String): AfinityEpisode? {
                                     index = mediaStream.index,
                                     channels = mediaStream.channels,
                                     isDefault = mediaStream.isDefault,
+                                    isForced = mediaStream.isForced,
+                                    isHearingImpaired = mediaStream.isHearingImpaired,
+                                    profile = mediaStream.profile,
                                 )
                             } ?: emptyList(),
                     )
@@ -261,9 +262,7 @@ fun BaseItemDto.toAfinityEpisode(baseUrl: String): AfinityEpisode? {
             trickplayInfo =
                 trickplay
                     ?.flatMap { (_, widthMap) ->
-                        widthMap.map { (width, info) ->
-                            width.toString() to info.toAfinityTrickplayInfo()
-                        }
+                        widthMap.map { (width, info) -> width to info.toAfinityTrickplayInfo() }
                     }
                     ?.toMap(),
             providerIds =
@@ -315,23 +314,6 @@ fun BaseItemDto.toAfinityFolder(baseUrl: String): AfinityFolder {
         providerIds = providerIds?.mapNotNull { (key, value) -> value?.let { key to it } }?.toMap(),
         externalUrls = toAfinityExternalUrls(),
         liked = userData?.likes == true,
-    )
-}
-
-fun BaseItemDto.toAfinityCollection(baseUrl: String): AfinityCollection? {
-    val type = CollectionType.fromString(collectionType?.serialName)
-
-    if (type !in CollectionType.supported) {
-        return null
-    }
-
-    return AfinityCollection(
-        id = id,
-        name = name.orEmpty(),
-        type = type,
-        images = toAfinityImages(baseUrl),
-        providerIds = providerIds?.mapNotNull { (key, value) -> value?.let { key to it } }?.toMap(),
-        externalUrls = toAfinityExternalUrls(),
     )
 }
 
@@ -409,13 +391,25 @@ fun BaseItemDto.toAfinityImages(baseUrl: String): AfinityImages {
                     .appendQueryParameter("tag", tag)
                     .build()
             },
-        showLogo =
-            seriesPrimaryImageTag?.let { tag ->
-                baseUri
-                    .buildUpon()
-                    .appendEncodedPath("Items/$seriesId/Images/Logo")
-                    .appendQueryParameter("tag", tag)
-                    .build()
+        showLogo = run {
+                val logoTag = parentLogoImageTag
+                val itemId = if (logoTag != null) (parentLogoItemId ?: seriesId) else seriesId
+                val fallbackTag = seriesPrimaryImageTag
+                when {
+                    logoTag != null && itemId != null ->
+                        baseUri
+                            .buildUpon()
+                            .appendEncodedPath("Items/$itemId/Images/Logo")
+                            .appendQueryParameter("tag", logoTag)
+                            .build()
+                    fallbackTag != null && seriesId != null ->
+                        baseUri
+                            .buildUpon()
+                            .appendEncodedPath("Items/$seriesId/Images/Logo")
+                            .appendQueryParameter("tag", fallbackTag)
+                            .build()
+                    else -> null
+                }
             },
         primaryImageBlurHash = imageBlurHashes?.get(ImageType.PRIMARY)?.values?.firstOrNull(),
         backdropImageBlurHash = imageBlurHashes?.get(ImageType.BACKDROP)?.values?.firstOrNull(),

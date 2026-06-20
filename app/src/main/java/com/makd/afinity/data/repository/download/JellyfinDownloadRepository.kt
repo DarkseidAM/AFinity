@@ -20,6 +20,8 @@ import com.makd.afinity.data.models.media.AfinitySourceType
 import com.makd.afinity.data.repository.DatabaseRepository
 import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.repository.media.MediaRepository
+import com.makd.afinity.data.storage.StorageLocationProvider
+import com.makd.afinity.data.storage.VolumeUnavailableException
 import com.makd.afinity.data.workers.ImageDownloadWorker
 import com.makd.afinity.data.workers.MediaDownloadWorker
 import com.makd.afinity.data.workers.SubtitleDownloadWorker
@@ -50,6 +52,7 @@ constructor(
     private val mediaRepository: MediaRepository,
     private val databaseRepository: DatabaseRepository,
     private val preferencesRepository: PreferencesRepository,
+    private val storageLocationProvider: StorageLocationProvider,
     private val workManager: WorkManager,
 ) : DownloadRepository {
 
@@ -62,15 +65,56 @@ constructor(
         const val MAX_CONCURRENT_DOWNLOADS = 2
     }
 
-    private val downloadDir: File
-        get() =
-            File(context.getExternalFilesDir(null), "AFinity/Downloads").also {
-                if (!it.exists()) it.mkdirs()
+    /**
+     * Resolves the `AFinity/Downloads` base directory for the given volume. Throws
+     * [VolumeUnavailableException] when a non-primary volume is no longer mounted (e.g. the SD card
+     * was removed) rather than silently retargeting to primary — silently falling back would let
+     * deletes/cleanup no-op on the absent volume's files while still mutating state, orphaning the
+     * media. The primary volume is always resolvable.
+     */
+    private fun baseDir(volumeId: String): File {
+        val dir =
+            if (volumeId == StorageLocationProvider.PRIMARY_VOLUME_ID) {
+                storageLocationProvider.primaryBaseDir()
+            } else {
+                storageLocationProvider.resolveBaseDir(volumeId)
+                    ?: throw VolumeUnavailableException(
+                        volumeId,
+                        storageLocationProvider.displayNameFor(volumeId),
+                    )
             }
+        if (!dir.exists() && !dir.mkdirs()) {
+            Timber.e("Failed to create base download directory at ${dir.absolutePath}")
+        }
+        return dir
+    }
 
-    override suspend fun startDownload(itemId: UUID, sourceId: String): Result<UUID> =
+    override suspend fun startDownload(
+        itemId: UUID,
+        sourceId: String,
+        volumeId: String?,
+    ): Result<UUID> =
         withContext(Dispatchers.IO) {
             return@withContext try {
+                // An explicit volume choice that is no longer mounted is an error — fail loudly
+                // rather than silently retargeting the user's deliberate selection.
+                if (volumeId != null && !storageLocationProvider.isVolumeAvailable(volumeId)) {
+                    return@withContext Result.failure(
+                        VolumeUnavailableException(
+                            volumeId,
+                            storageLocationProvider.displayNameFor(volumeId),
+                        )
+                    )
+                }
+
+                // Fall back to the primary volume when the global default is unavailable so a
+                // tap-to-download never fails just because an SD card was removed.
+                val requestedVolumeId =
+                    volumeId ?: preferencesRepository.getDownloadStorageVolumeId()
+                val resolvedVolumeId =
+                    if (storageLocationProvider.isVolumeAvailable(requestedVolumeId)) requestedVolumeId
+                    else StorageLocationProvider.PRIMARY_VOLUME_ID
+
                 val currentSession =
                     sessionManager.currentSession.value
                         ?: return@withContext Result.failure(Exception("No active session"))
@@ -193,6 +237,7 @@ constructor(
                         runtimeTicks = runtimeTicks,
                         folderPath = folderPath,
                         seriesId = (item as? AfinityEpisode)?.seriesId?.toString(),
+                        storageVolumeId = resolvedVolumeId,
                     )
 
                 databaseRepository.insertDownload(download)
@@ -324,7 +369,7 @@ constructor(
 
                 val download = databaseRepository.getDownload(downloadId)
                 if (download != null) {
-                    val itemDir = getItemDownloadDirectory(download.itemId)
+                    val itemDir = getItemDownloadDirectory(download)
                     val mediaDir = File(itemDir, "media")
                     if (mediaDir.exists()) {
                         mediaDir
@@ -334,14 +379,15 @@ constructor(
                                 file.delete()
                             }
                     }
-                    if (
-                        itemDir.exists() &&
-                            (itemDir.listFiles()?.isEmpty() == true ||
-                                itemDir.listFiles()?.all {
-                                    it.name == "media" && it.listFiles()?.isEmpty() == true
-                                } == true)
-                    ) {
-                        itemDir.deleteRecursively()
+                    if (itemDir.exists()) {
+                        val children = itemDir.listFiles() ?: emptyArray()
+                        val onlyEmptyMediaDir =
+                            children.size == 1 &&
+                                children[0].name == "media" &&
+                                children[0].listFiles()?.isEmpty() == true
+                        if (children.isEmpty() || onlyEmptyMediaDir) {
+                            itemDir.deleteRecursively()
+                        }
                     }
                     databaseRepository.deleteDownload(downloadId)
                 }
@@ -360,7 +406,14 @@ constructor(
                     databaseRepository.getDownload(downloadId)
                         ?: return@withContext Result.failure(Exception("Download not found"))
 
-                val itemFolder = File(downloadDir, download.itemId.toString())
+                // baseDir throws VolumeUnavailableException when the item's volume is gone, so a
+                // delete can never no-op on absent files while dropping the DB rows. The UI catches
+                // that and offers "remove from list" instead.
+                val baseDir = baseDir(download.storageVolumeId)
+
+                val targetPath = download.folderPath ?: download.itemId.toString()
+                val itemFolder = File(baseDir, targetPath)
+
                 if (itemFolder.exists()) {
                     itemFolder.deleteRecursively()
                 }
@@ -375,6 +428,27 @@ constructor(
                 Result.success(Unit)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to delete download")
+                Result.failure(e)
+            }
+        }
+
+    override suspend fun removeDownloadRecord(downloadId: UUID): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            return@withContext try {
+                val download =
+                    databaseRepository.getDownload(downloadId)
+                        ?: return@withContext Result.failure(Exception("Download not found"))
+
+                val sources = databaseRepository.getSources(download.itemId)
+                sources
+                    .filter { it.type == AfinitySourceType.LOCAL }
+                    .forEach { databaseRepository.deleteSource(it.id) }
+
+                databaseRepository.deleteDownload(downloadId)
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to remove download record")
                 Result.failure(e)
             }
         }
@@ -477,29 +551,81 @@ constructor(
             }
         }
 
-    fun getDownloadDirectory(): File = downloadDir
+    override suspend fun getStorageUsedPerVolume(): Map<String, Long> =
+        withContext(Dispatchers.IO) {
+            return@withContext try {
+                val session = sessionManager.currentSession.value ?: return@withContext emptyMap()
+                databaseRepository.getTotalBytesPerVolumeForServer(session.serverId)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to calculate per-volume storage used")
+                emptyMap()
+            }
+        }
 
-    suspend fun getItemDownloadDirectory(itemId: UUID): File {
-        val folderPath = databaseRepository.getDownloadByItemId(itemId)?.folderPath
-        return File(downloadDir, folderPath ?: itemId.toString()).also { it.mkdirs() }
+    override suspend fun getStorageUsedPerVolumeAllServers(): Map<String, Long> =
+        withContext(Dispatchers.IO) {
+            return@withContext try {
+                databaseRepository.getTotalBytesPerVolumeAllServers()
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to calculate per-volume storage used")
+                emptyMap()
+            }
+        }
+
+    fun getDownloadDirectory(): File = baseDir(StorageLocationProvider.PRIMARY_VOLUME_ID)
+
+    fun getItemDownloadDirectory(download: DownloadDto): File {
+        val dir = File(baseDir(download.storageVolumeId), download.folderPath ?: download.itemId.toString())
+        if (!dir.exists() && !dir.mkdirs()) Timber.w("Failed to create item directory")
+        return dir
     }
 
-    fun getShowDirectory(serverId: String, showId: UUID): File =
-        File(downloadDir, "$serverId/shows/$showId").also { it.mkdirs() }
+    suspend fun getItemDownloadDirectory(itemId: UUID): File {
+        val session = sessionManager.currentSession.value
+        val download = if (session != null) {
+            databaseRepository.getDownloadByItemIdScoped(itemId, session.serverId, session.userId)
+        } else {
+            databaseRepository.getDownloadByItemId(itemId)
+        }
+        val folderPath = download?.folderPath
+        val volumeId = download?.storageVolumeId ?: StorageLocationProvider.PRIMARY_VOLUME_ID
+        val dir = File(baseDir(volumeId), folderPath ?: itemId.toString())
+        if (!dir.exists() && !dir.mkdirs()) Timber.w("Failed to create item directory")
+        return dir
+    }
 
-    fun getSeasonDirectory(serverId: String, showId: UUID, seasonNumber: Int): File =
-        File(downloadDir, "$serverId/shows/$showId/seasons/$seasonNumber").also { it.mkdirs() }
+    fun getShowDirectory(serverId: String, showId: UUID, volumeId: String): File {
+        val dir = File(baseDir(volumeId), "$serverId/shows/$showId")
+        if (!dir.exists() && !dir.mkdirs()) Timber.w("Failed to create show directory")
+        return dir
+    }
 
-    override suspend fun startSeasonDownload(seasonId: UUID, seriesId: UUID?): Result<Int> =
+    fun getSeasonDirectory(serverId: String, showId: UUID, seasonNumber: Int, volumeId: String): File {
+        val dir =
+            File(
+                baseDir(volumeId),
+                "$serverId/shows/$showId/seasons/$seasonNumber",
+            )
+        if (!dir.exists() && !dir.mkdirs()) Timber.w("Failed to create season directory")
+        return dir
+    }
+
+    override suspend fun startSeasonDownload(
+        seasonId: UUID,
+        seriesId: UUID?,
+        volumeId: String?,
+    ): Result<Int> =
         withContext(Dispatchers.IO) {
             return@withContext try {
                 val episodes = mediaRepository.getEpisodes(seasonId, seriesId)
                 var started = 0
                 for (episode in episodes) {
-                    startDownload(episode.id, "")
+                    startDownload(episode.id, "", volumeId)
                         .onSuccess { started++ }
-                        .onFailure {
-                            Timber.w(it, "Skipping episode ${episode.name}: ${it.message}")
+                        .onFailure { error ->
+                            if (error is VolumeUnavailableException)
+                                return@withContext Result.failure(error)
+                            Timber.w(error, "Skipping episode ${episode.name}: ${error.message}")
                         }
                 }
                 Timber.i("Season download queued $started/${episodes.size} episodes")
@@ -510,13 +636,13 @@ constructor(
             }
         }
 
-    override suspend fun startSeriesDownload(showId: UUID): Result<Int> =
+    override suspend fun startSeriesDownload(showId: UUID, volumeId: String?): Result<Int> =
         withContext(Dispatchers.IO) {
             return@withContext try {
                 val seasons = mediaRepository.getSeasons(showId)
                 var totalStarted = 0
                 for (season in seasons) {
-                    startSeasonDownload(season.id, showId)
+                    startSeasonDownload(season.id, showId, volumeId)
                         .onSuccess { count -> totalStarted += count }
                         .onFailure { Timber.w(it, "Skipping season ${season.name}: ${it.message}") }
                 }
@@ -534,10 +660,9 @@ constructor(
         withContext(Dispatchers.IO) {
             return@withContext try {
                 val downloads = getAllDownloadsFlow().first()
-                val toCancel =
-                    downloads.filter {
-                        it.seriesId == showId.toString() && it.status != DownloadStatus.COMPLETED
-                    }
+                val toCancel = downloads.filter {
+                    it.seriesId == showId.toString() && it.status != DownloadStatus.COMPLETED
+                }
                 for (download in toCancel) {
                     cancelDownload(download.id)
                 }
@@ -553,12 +678,11 @@ constructor(
         withContext(Dispatchers.IO) {
             return@withContext try {
                 val downloads = getAllDownloadsFlow().first()
-                val toCancel =
-                    downloads.filter {
-                        it.seriesId == seriesId.toString() &&
-                            it.seasonNumber == seasonNumber &&
-                            it.status != DownloadStatus.COMPLETED
-                    }
+                val toCancel = downloads.filter {
+                    it.seriesId == seriesId.toString() &&
+                        it.seasonNumber == seasonNumber &&
+                        it.status != DownloadStatus.COMPLETED
+                }
                 for (download in toCancel) {
                     cancelDownload(download.id)
                 }

@@ -42,11 +42,10 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,7 +54,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -66,6 +64,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.text.HtmlCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import com.makd.afinity.R
@@ -82,10 +83,12 @@ import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinityMovie
 import com.makd.afinity.data.models.media.AfinityShow
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AsyncImage
+import com.makd.afinity.ui.components.EpisodeOverlayHandler
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.components.RequestConfirmationDialog
 import com.makd.afinity.ui.theme.CardDimensions.gridMinSize
-import kotlinx.coroutines.delay
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
@@ -104,22 +107,32 @@ fun SearchScreen(
     widthSizeClass: WindowWidthSizeClass,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val isJellyseerrAuthenticated by
         viewModel.isJellyseerrAuthenticated.collectAsStateWithLifecycle()
     val isAudiobookshelfAuthenticated by
         viewModel.isAudiobookshelfAuthenticated.collectAsStateWithLifecycle()
     val selectedEpisode by viewModel.selectedEpisode.collectAsStateWithLifecycle()
-    val isLoadingEpisode by viewModel.isLoadingEpisode.collectAsStateWithLifecycle()
     val selectedEpisodeWatchlistStatus by
         viewModel.selectedEpisodeWatchlistStatus.collectAsStateWithLifecycle()
     val selectedEpisodeDownloadInfo by
         viewModel.selectedEpisodeDownloadInfo.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val canDownload by viewModel.canDownload.collectAsStateWithLifecycle()
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     LocalFocusManager.current
-    var pendingNavigationSeriesId by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier =
@@ -208,9 +221,7 @@ fun SearchScreen(
                 }
 
                 allLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
+                    FullScreenLoading()
                 }
 
                 uiState.isJellyseerrSearchMode && uiState.jellyseerrSearchResults.isNotEmpty() -> {
@@ -342,43 +353,17 @@ fun SearchScreen(
             )
         }
 
-        selectedEpisode?.let { episode ->
-            com.makd.afinity.ui.item.components.EpisodeDetailOverlay(
-                episode = episode,
-                isInWatchlist = selectedEpisodeWatchlistStatus,
-                downloadInfo = selectedEpisodeDownloadInfo,
-                onDismiss = { viewModel.clearSelectedEpisode() },
-                onPlayClick = { episodeToPlay, selection ->
-                    viewModel.clearSelectedEpisode()
-                    com.makd.afinity.ui.player.PlayerLauncher.launch(
-                        context = context,
-                        itemId = episodeToPlay.id,
-                        mediaSourceId = selection.mediaSourceId,
-                        audioStreamIndex = selection.audioStreamIndex,
-                        subtitleStreamIndex = selection.subtitleStreamIndex,
-                        startPositionMs = selection.startPositionMs,
-                    )
-                },
-                onToggleFavorite = { viewModel.toggleEpisodeFavorite(episode) },
-                onToggleWatchlist = { viewModel.toggleEpisodeWatchlist(episode) },
-                onToggleWatched = { viewModel.toggleEpisodeWatched(episode) },
-                onDownloadClick = { viewModel.onDownloadClick() },
-                onPauseDownload = { viewModel.pauseDownload() },
-                onResumeDownload = { viewModel.resumeDownload() },
-                onCancelDownload = { viewModel.cancelDownload() },
-                onGoToSeries = {
-                    viewModel.clearSelectedEpisode()
-                    pendingNavigationSeriesId = episode.seriesId?.toString()
-                },
-            )
-        }
-        LaunchedEffect(selectedEpisode, pendingNavigationSeriesId) {
-            if (selectedEpisode == null && pendingNavigationSeriesId != null) {
-                delay(300)
-                onSeriesClick(pendingNavigationSeriesId!!)
-                pendingNavigationSeriesId = null
-            }
-        }
+        EpisodeOverlayHandler(
+            selectedEpisode = selectedEpisode,
+            watchlistStatus = selectedEpisodeWatchlistStatus,
+            downloadInfo = selectedEpisodeDownloadInfo,
+            canDownload = canDownload,
+            onClearSelection = { viewModel.clearSelectedEpisode() },
+            onToggleFavorite = { episode -> viewModel.toggleEpisodeFavorite(episode) },
+            onToggleWatchlist = { episode -> viewModel.toggleEpisodeWatchlist(episode) },
+            onToggleWatched = { episode -> viewModel.toggleEpisodeWatched(episode) },
+            onNavigateToSeries = { seriesId -> onSeriesClick(seriesId) },
+        )
     }
 }
 
@@ -501,7 +486,7 @@ private fun HorizontalLibraryFilters(
             }
         }
 
-        items(libraries) { library ->
+        items(libraries, key = { it.id }) { library ->
             LibraryFilterChip(
                 text = library.name,
                 isSelected =
@@ -525,6 +510,7 @@ private fun SearchHomeContent(
     widthSizeClass: WindowWidthSizeClass,
     isAudiobookshelf: Boolean = false,
 ) {
+    val playerOffset = LocalPlayerOffset.current
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -540,9 +526,9 @@ private fun SearchHomeContent(
             modifier = Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 16.dp),
+            contentPadding = PaddingValues(bottom = 16.dp + playerOffset),
         ) {
-            items(genres) { genre ->
+            items(genres, key = { it }) { genre ->
                 GenreCard(
                     genre = genre,
                     onClick = { onGenreClick(genre) },
@@ -560,9 +546,11 @@ private fun SearchResultsContent(
     onEpisodeClick: (AfinityEpisode) -> Unit,
 ) {
     LocalSoftwareKeyboardController.current
+    val playerOffset = LocalPlayerOffset.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding =
+            PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + playerOffset),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -573,7 +561,7 @@ private fun SearchResultsContent(
             )
         }
 
-        items(results) { item ->
+        items(results, key = { it.id }) { item ->
             SearchResultItem(
                 item = item,
                 onClick = {
@@ -853,9 +841,11 @@ private fun JellyseerrSearchResultsContent(
     results: List<SearchResultItem>,
     onRequestClick: (SearchResultItem) -> Unit,
 ) {
+    val playerOffset = LocalPlayerOffset.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding =
+            PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + playerOffset),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
@@ -866,7 +856,7 @@ private fun JellyseerrSearchResultsContent(
             )
         }
 
-        items(results) { item ->
+        items(results, key = { it.id }) { item ->
             JellyseerrSearchResultItem(item = item, onRequestClick = { onRequestClick(item) })
         }
     }
@@ -1267,46 +1257,60 @@ private fun CombinedSearchResultsContent(
     val movies = remember(jellyfinResults) { jellyfinResults.filterIsInstance<AfinityMovie>() }
     val shows = remember(jellyfinResults) { jellyfinResults.filterIsInstance<AfinityShow>() }
     val episodes = remember(jellyfinResults) { jellyfinResults.filterIsInstance<AfinityEpisode>() }
+    val playerOffset = LocalPlayerOffset.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding =
+            PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + playerOffset),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (collections.isNotEmpty()) {
             item { SearchSectionHeader(stringResource(R.string.media_type_collection) + "s") }
-            items(collections) { item ->
+            items(collections, key = { "collection_${it.id}" }) { item ->
                 SearchResultItem(item = item, onClick = { onItemClick(item) })
             }
         }
 
         if (movies.isNotEmpty()) {
             item { SearchSectionHeader(stringResource(R.string.media_type_movie) + "s") }
-            items(movies) { item -> SearchResultItem(item = item, onClick = { onItemClick(item) }) }
+            items(movies, key = { "movie_${it.id}" }) { item ->
+                SearchResultItem(item = item, onClick = { onItemClick(item) })
+            }
         }
 
         if (shows.isNotEmpty()) {
             item { SearchSectionHeader(stringResource(R.string.media_type_tv_show) + "s") }
-            items(shows) { item -> SearchResultItem(item = item, onClick = { onItemClick(item) }) }
+            items(shows, key = { "show_${it.id}" }) { item ->
+                SearchResultItem(item = item, onClick = { onItemClick(item) })
+            }
         }
 
         if (episodes.isNotEmpty()) {
             item { SearchSectionHeader(stringResource(R.string.media_type_episode) + "s") }
-            items(episodes) { item ->
+            items(episodes, key = { "episode_${it.id}" }) { item ->
                 SearchResultItem(item = item, onClick = { onEpisodeClick(item) })
             }
         }
 
         if (jellyseerrResults.isNotEmpty() || isJellyseerrSearching) {
-            item { SearchSectionHeader("Discover & Request", isLoading = isJellyseerrSearching) }
-            items(jellyseerrResults) { item ->
+            item {
+                SearchSectionHeader(
+                    stringResource(R.string.section_discover_request),
+                    isLoading = isJellyseerrSearching,
+                )
+            }
+            items(jellyseerrResults, key = { "jellyseerr_${it.id}" }) { item ->
                 JellyseerrSearchResultItem(item = item, onRequestClick = { onRequestClick(item) })
             }
         }
 
         if (audiobookshelfResults.isNotEmpty() || isAudiobookshelfSearching) {
             item {
-                SearchSectionHeader("Audiobooks & Podcasts", isLoading = isAudiobookshelfSearching)
+                SearchSectionHeader(
+                    stringResource(R.string.section_audiobooks_podcasts),
+                    isLoading = isAudiobookshelfSearching,
+                )
             }
             items(audiobookshelfResults, key = { it.id }) { item ->
                 AudiobookshelfSearchResultItem(

@@ -28,22 +28,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.makd.afinity.R
 import com.makd.afinity.data.models.extensions.backdropBlurHash
 import com.makd.afinity.data.models.extensions.backdropImageUrl
 import com.makd.afinity.data.models.extensions.primaryBlurHash
 import com.makd.afinity.data.models.extensions.primaryImageUrl
+import com.makd.afinity.data.models.extensions.showBackdropBlurHash
+import com.makd.afinity.data.models.extensions.showBackdropImageUrl
+import com.makd.afinity.data.models.extensions.showThumbBlurHash
+import com.makd.afinity.data.models.extensions.showThumbImageUrl
 import com.makd.afinity.data.models.extensions.thumbBlurHash
 import com.makd.afinity.data.models.extensions.thumbImageUrl
 import com.makd.afinity.data.models.media.AfinityEpisode
+import com.makd.afinity.navigation.LocalShowRatings
 import com.makd.afinity.ui.theme.CardDimensions
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -60,51 +68,59 @@ fun EpisodeListCard(
     val interactionSource = remember { MutableInteractionSource() }
 
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            ),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                ),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val isUpcoming = item.missing && item.premiereDate?.isAfter(LocalDateTime.now()) == true
+            val isMissingAndAired = item.missing && !isUpcoming
+
             Box(
-                modifier = Modifier
-                    .width(thumbnailWidth)
-                    .aspectRatio(CardDimensions.ASPECT_RATIO_LANDSCAPE)
-                    .clip(MaterialTheme.shapes.medium)
+                modifier =
+                    Modifier.width(thumbnailWidth)
+                        .aspectRatio(CardDimensions.ASPECT_RATIO_LANDSCAPE)
+                        .clip(MaterialTheme.shapes.medium)
+                        .alpha(if (isMissingAndAired) 0.5f else 1f)
             ) {
-                val blurHash = item.images.primaryBlurHash
-                    ?: item.images.thumbBlurHash
-                    ?: item.images.backdropBlurHash
-                AsyncImage(
-                    imageUrl = item.images.primaryImageUrl
+                val blurHash =
+                    item.images.primaryBlurHash
+                        ?: item.images.thumbBlurHash
+                        ?: item.images.backdropBlurHash
+                        ?: item.images.showThumbBlurHash
+                        ?: item.images.showBackdropBlurHash
+                val imageUrl =
+                    item.images.primaryImageUrl
                         ?: item.images.thumbImageUrl
-                        ?: item.images.backdropImageUrl,
+                        ?: item.images.backdropImageUrl
+                        ?: item.images.showThumbImageUrl
+                        ?: item.images.showBackdropImageUrl
+                AsyncImage(
+                    imageUrl = imageUrl,
                     blurHash = blurHash,
                     contentDescription = item.name,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                 )
 
-                if (item.runtimeTicks != null && item.runtimeTicks > 0) {
+                if (item.runtimeTicks > 0) {
                     val progress = (item.playbackPositionTicks ?: 0f).toFloat() / item.runtimeTicks
                     if (progress > 0f) {
                         LinearProgressIndicator(
                             progress = { progress },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(4.dp)
-                                .align(Alignment.BottomCenter),
+                            modifier =
+                                Modifier.fillMaxWidth().height(4.dp).align(Alignment.BottomCenter),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = Color.Black.copy(alpha = 0.3f),
                         )
@@ -113,16 +129,16 @@ fun EpisodeListCard(
 
                 if (item.played) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .size(24.dp)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                        modifier =
+                            Modifier.align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .size(24.dp)
+                                .background(MaterialTheme.colorScheme.primary, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_check),
-                            contentDescription = "Watched",
+                            contentDescription = stringResource(R.string.cd_watched),
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(16.dp),
                         )
@@ -140,39 +156,92 @@ fun EpisodeListCard(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     Text(
-                        text = "S${item.parentIndexNumber}:E${item.indexNumber}",
+                        text =
+                            "S${item.parentIndexNumber}:E" +
+                                if (
+                                    item.indexNumberEnd != null &&
+                                        item.indexNumberEnd != item.indexNumber
+                                )
+                                    "${item.indexNumber}-E${item.indexNumberEnd}"
+                                else "${item.indexNumber}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.align(Alignment.CenterVertically)
+                        modifier = Modifier.align(Alignment.CenterVertically),
                     )
 
-                    item.communityRating?.let { rating ->
-                        MetadataDot(modifier = Modifier.align(Alignment.CenterVertically))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.align(Alignment.CenterVertically)
+                    if (isMissingAndAired) {
+                        Box(
+                            modifier =
+                                Modifier.background(
+                                        Color.Red.copy(alpha = 0.8f),
+                                        RoundedCornerShape(4.dp),
+                                    )
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .align(Alignment.CenterVertically)
                         ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_imdb_logo),
-                                contentDescription = "IMDB",
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(16.dp),
-                            )
                             Text(
-                                text = String.format(Locale.US, "%.1f", rating),
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = stringResource(R.string.episode_missing),
+                                color = Color.White,
+                                style =
+                                    MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp,
+                                    ),
                             )
+                        }
+                    } else if (isUpcoming) {
+                        Box(
+                            modifier =
+                                Modifier.background(
+                                        Color(0xFF2E7D32).copy(alpha = 0.9f),
+                                        RoundedCornerShape(4.dp),
+                                    )
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .align(Alignment.CenterVertically)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.episode_upcoming),
+                                color = Color.White,
+                                style =
+                                    MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.5.sp,
+                                    ),
+                            )
+                        }
+                    }
+
+                    if (LocalShowRatings.current) {
+                        item.communityRating?.let { rating ->
+                            MetadataDot(modifier = Modifier.align(Alignment.CenterVertically))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_imdb_logo),
+                                    contentDescription = stringResource(R.string.cd_imdb),
+                                    tint = Color.Unspecified,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "%.1f", rating),
+                                    style =
+                                        MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
 
                 Text(
-                    text = item.name ?: "Unknown Episode",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    text = item.name ?: stringResource(R.string.unknown_episode),
+                    style =
+                        MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -188,7 +257,7 @@ fun EpisodeListCard(
                             text = "${minutes}min",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.CenterVertically)
+                            modifier = Modifier.align(Alignment.CenterVertically),
                         )
                     }
 
@@ -200,7 +269,7 @@ fun EpisodeListCard(
                             text = formatDate(date),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.CenterVertically)
+                            modifier = Modifier.align(Alignment.CenterVertically),
                         )
                     }
                 }
@@ -215,7 +284,7 @@ private fun MetadataDot(modifier: Modifier = Modifier) {
         text = "•",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier
+        modifier = modifier,
     )
 }
 

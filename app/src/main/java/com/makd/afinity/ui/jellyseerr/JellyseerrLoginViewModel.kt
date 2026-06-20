@@ -1,10 +1,13 @@
 package com.makd.afinity.ui.jellyseerr
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.makd.afinity.R
 import com.makd.afinity.data.models.jellyseerr.JellyseerrUser
 import com.makd.afinity.data.repository.JellyseerrRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +19,10 @@ import javax.inject.Inject
 @HiltViewModel
 class JellyseerrLoginViewModel
 @Inject
-constructor(private val jellyseerrRepository: JellyseerrRepository) : ViewModel() {
+constructor(
+    @param:ApplicationContext private val context: Context,
+    private val jellyseerrRepository: JellyseerrRepository,
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(JellyseerrLoginUiState())
     val uiState: StateFlow<JellyseerrLoginUiState> = _uiState.asStateFlow()
@@ -95,7 +101,7 @@ constructor(private val jellyseerrRepository: JellyseerrRepository) : ViewModel(
 
                 _uiState.update { it.copy(isLoading = true, error = null) }
 
-                val rawUrl = _uiState.value.serverUrl.trim()
+                val rawUrl = _uiState.value.serverUrl.trim().removeSuffix("/")
                 val candidateUrls =
                     if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
                         listOf(rawUrl)
@@ -103,55 +109,72 @@ constructor(private val jellyseerrRepository: JellyseerrRepository) : ViewModel(
                         listOf("https://$rawUrl", "http://$rawUrl")
                     }
 
-                var successUser: JellyseerrUser? = null
-                var lastError: Throwable? = null
+                var validUrl: String? = null
+
                 for (url in candidateUrls) {
-                    jellyseerrRepository.setServerUrl(url)
-
-                    val result =
-                        jellyseerrRepository.login(
-                            email = _uiState.value.email.trim(),
-                            password = _uiState.value.password,
-                            useJellyfinAuth = _uiState.value.useJellyfinAuth,
-                        )
-
-                    if (result.isSuccess) {
-                        successUser = result.getOrNull()
-                        _uiState.update { it.copy(serverUrl = url) }
+                    val isServerValid = jellyseerrRepository.verifyServer(url)
+                    if (isServerValid) {
+                        validUrl = url
                         break
                     } else {
-                        lastError = result.exceptionOrNull()
-                        val errMsg = lastError?.message ?: ""
-                        if (errMsg.contains("401") || errMsg.contains("403")) {
-                            break
-                        }
-                        Timber.d(
-                            "Connection to $url failed, trying next protocol (if any). Error: $errMsg"
-                        )
+                        Timber.d("Verification failed for candidate URL: $url")
                     }
                 }
-                if (successUser != null) {
+
+                if (validUrl == null) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error =
+                                "Could not connect. Please verify this is a valid Jellyseerr server.",
+                        )
+                    }
+                    return@launch
+                }
+
+                jellyseerrRepository.setServerUrl(validUrl)
+                val result =
+                    jellyseerrRepository.login(
+                        email = _uiState.value.email.trim(),
+                        password = _uiState.value.password,
+                        useJellyfinAuth = _uiState.value.useJellyfinAuth,
+                    )
+
+                if (result.isSuccess) {
+                    val successUser = result.getOrNull()
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             loginSuccess = true,
+                            serverUrl = validUrl,
                             loggedInUser =
-                                successUser!!.displayName
-                                    ?: successUser!!.username
-                                    ?: successUser!!.email,
+                                successUser?.displayName
+                                    ?: successUser?.username
+                                    ?: successUser?.email,
                             currentUser = successUser,
                         )
                     }
-                    Timber.d("Login successful for user: ${successUser!!.username}")
+                    Timber.d("Login successful for user: ${successUser?.username}")
                 } else {
-                    _uiState.update {
-                        it.copy(isLoading = false, error = parseErrorMessage(lastError?.message))
-                    }
-                    Timber.e(lastError, "Login failed across all protocols")
+                    val lastError = result.exceptionOrNull()
+                    val errMsg = lastError?.message ?: ""
+
+                    val finalErrorMessage =
+                        if (errMsg.contains("401") || errMsg.contains("403")) {
+                            "Invalid email or password."
+                        } else {
+                            parseErrorMessage(errMsg)
+                        }
+
+                    _uiState.update { it.copy(isLoading = false, error = finalErrorMessage) }
+                    Timber.e(lastError, "Jellyseerr login failed on validated server")
                 }
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(isLoading = false, error = "An unexpected error occurred: ${e.message}")
+                    it.copy(
+                        isLoading = false,
+                        error = context.getString(R.string.error_unexpected_fmt, e.message ?: ""),
+                    )
                 }
                 Timber.e(e, "Error during login")
             }
@@ -244,7 +267,11 @@ constructor(private val jellyseerrRepository: JellyseerrRepository) : ViewModel(
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
-                                    error = "Logout failed: ${error.message}",
+                                    error =
+                                        context.getString(
+                                            R.string.error_logout_failed_fmt,
+                                            error.message ?: "",
+                                        ),
                                 )
                             }
                             Timber.e(error, "Logout failed")
@@ -252,7 +279,10 @@ constructor(private val jellyseerrRepository: JellyseerrRepository) : ViewModel(
                     )
             } catch (e: Exception) {
                 _uiState.update {
-                    it.copy(isLoading = false, error = "An unexpected error occurred: ${e.message}")
+                    it.copy(
+                        isLoading = false,
+                        error = context.getString(R.string.error_unexpected_fmt, e.message ?: ""),
+                    )
                 }
                 Timber.e(e, "Error during logout")
             }

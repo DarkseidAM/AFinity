@@ -3,13 +3,6 @@ package com.makd.afinity.ui.item.components.shared
 import android.content.Context
 import android.content.res.Configuration
 import android.text.format.DateFormat
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +20,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,7 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.makd.afinity.R
-import com.makd.afinity.data.models.mdblist.MdbListRating
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
@@ -56,15 +53,26 @@ import java.util.Locale
 fun MetadataRow(
     item: AfinityItem,
     totalChildRuntimeTicks: Long = 0L,
-    remainingChildRuntimeTicks: Long = totalChildRuntimeTicks,
     boxSetItems: List<AfinityItem> = emptyList(),
-    mdbRatings: List<MdbListRating> = emptyList(),
-    isRatingsFromCache: Boolean = false,
+    selectedSourceId: String? = null,
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val horizontalAlignment = if (isLandscape) Alignment.Start else Alignment.CenterHorizontally
+
+    var stableRuntimeTicks by remember(item.id) { mutableLongStateOf(item.runtimeTicks) }
+    if (item.runtimeTicks > 0L) {
+        stableRuntimeTicks = item.runtimeTicks
+    }
+
+    val rawEpCount =
+        (item as? AfinityShow)?.episodeCount ?: (item as? AfinitySeason)?.episodeCount ?: 0
+    var stableEpCount by remember(item.id) { mutableIntStateOf(rawEpCount) }
+    if (rawEpCount > 0) {
+        stableEpCount = rawEpCount
+    }
+
     val actualTotalChildTicks =
         if (boxSetItems.isNotEmpty()) {
             boxSetItems.sumOf { child ->
@@ -82,46 +90,6 @@ fun MetadataRow(
             totalChildRuntimeTicks
         }
 
-    val actualRemainingChildTicks =
-        if (boxSetItems.isNotEmpty()) {
-            boxSetItems.sumOf { child ->
-                if (child.played) {
-                    0L
-                } else {
-                    val epCountForEndsAt =
-                        (child as? AfinityShow)?.episodeCount
-                            ?: (child as? AfinitySeason)?.episodeCount
-                            ?: 1
-                    val unplayedCount =
-                        (child as? AfinityShow)?.unplayedItemCount
-                            ?: (child as? AfinitySeason)?.unplayedItemCount
-                            ?: epCountForEndsAt
-
-                    if (
-                        (child is AfinityShow || child is AfinitySeason) && child.runtimeTicks > 0
-                    ) {
-                        val inProgressRemaining =
-                            if (child.playbackPositionTicks > 0)
-                                (child.runtimeTicks - child.playbackPositionTicks).coerceAtLeast(0L)
-                            else 0L
-                        val fullyUnwatchedCount =
-                            if (child.playbackPositionTicks > 0)
-                                (unplayedCount - 1).coerceAtLeast(0)
-                            else unplayedCount
-                        fullyUnwatchedCount.toLong() * child.runtimeTicks + inProgressRemaining
-                    } else {
-                        if (child.playbackPositionTicks > 0) {
-                            (child.runtimeTicks - child.playbackPositionTicks).coerceAtLeast(0L)
-                        } else {
-                            child.runtimeTicks
-                        }
-                    }
-                }
-            }
-        } else {
-            remainingChildRuntimeTicks
-        }
-
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         if (item !is AfinityBoxSet && item.sources.isNotEmpty()) {
             FlowRow(
@@ -129,7 +97,7 @@ fun MetadataRow(
                 verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                val source = item.sources.firstOrNull()
+                val source = item.sources.find { it.id == selectedSourceId } ?: item.sources.firstOrNull()
 
                 source
                     ?.mediaStreams
@@ -188,29 +156,31 @@ fun MetadataRow(
                 source
                     ?.mediaStreams
                     ?.firstOrNull { it.type == MediaStreamType.AUDIO }
-                    ?.codec
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { codec ->
-                        when (codec.lowercase()) {
-                            "ac3" ->
+                    ?.let { audioStream ->
+                        val isAtmos = audioStream.profile?.contains("Atmos", ignoreCase = true) == true
+                        val codec = audioStream.codec.takeIf { it.isNotEmpty() } ?: return@let
+                        when {
+                            isAtmos ->
+                                VideoMetadataChipWithIcon(
+                                    text = "Atmos",
+                                    iconRes = R.drawable.ic_brand_dolby_digital,
+                                )
+                            codec.lowercase() == "ac3" ->
                                 VideoMetadataChipWithIcon(
                                     text = stringResource(R.string.meta_digital),
                                     iconRes = R.drawable.ic_brand_dolby_digital,
                                 )
-
-                            "eac3" ->
+                            codec.lowercase() == "eac3" ->
                                 VideoMetadataChipWithIcon(
                                     text = stringResource(R.string.meta_digital_plus),
                                     iconRes = R.drawable.ic_brand_dolby_digital,
                                 )
-
-                            "truehd" ->
+                            codec.lowercase() == "truehd" ->
                                 VideoMetadataChipWithIcon(
                                     text = stringResource(R.string.meta_truehd),
                                     iconRes = R.drawable.ic_brand_dolby_digital,
                                 )
-
-                            "dts" -> VideoMetadataChip(text = "DTS")
+                            codec.lowercase() == "dts" -> VideoMetadataChip(text = "DTS")
                             else -> VideoMetadataChip(text = codec.uppercase())
                         }
                     }
@@ -240,6 +210,11 @@ fun MetadataRow(
             }
         }
 
+        val unplayedCount =
+            (item as? AfinityShow)?.unplayedItemCount
+                ?: (item as? AfinitySeason)?.unplayedItemCount
+                ?: stableEpCount
+
         Spacer(modifier = Modifier.height(2.dp))
 
         FlowRow(
@@ -250,9 +225,9 @@ fun MetadataRow(
             var needsSeparator = false
             val isSingleMedia =
                 item is AfinityMovie || item is AfinityEpisode || item is AfinityVideo
-            if (isSingleMedia && item.playbackPositionTicks > 0 && item.runtimeTicks > 0) {
-                val progress = item.playbackPositionTicks.toFloat() / item.runtimeTicks.toFloat()
-                val remainingTicks = item.runtimeTicks - item.playbackPositionTicks
+            if (isSingleMedia && item.playbackPositionTicks > 0 && stableRuntimeTicks > 0) {
+                val progress = item.playbackPositionTicks.toFloat() / stableRuntimeTicks.toFloat()
+                val remainingTicks = stableRuntimeTicks - item.playbackPositionTicks
                 val remainingHours = (remainingTicks / 10_000_000 / 3600).toInt()
                 val remainingMinutes = ((remainingTicks / 10_000_000 % 3600) / 60).toInt()
 
@@ -326,7 +301,6 @@ fun MetadataRow(
                 item.episodeCount
                     ?.takeIf { it > 0 }
                     ?.let { count ->
-                        if (needsSeparator) MetadataDot()
                         Text(
                             text = stringResource(R.string.meta_episode_count, count),
                             style =
@@ -337,78 +311,6 @@ fun MetadataRow(
                         )
                         needsSeparator = true
                     }
-            }
-
-            val communityRating =
-                when (item) {
-                    is AfinityMovie -> item.communityRating
-                    is AfinityShow -> item.communityRating
-                    is AfinityBoxSet -> item.communityRating
-                    else -> null
-                }
-
-            communityRating?.let { imdbRating ->
-                if (needsSeparator) MetadataDot()
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_imdb_logo),
-                        contentDescription = stringResource(R.string.cd_imdb),
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = String.format(Locale.US, "%.1f", imdbRating),
-                        style =
-                            MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
-                    )
-                }
-                needsSeparator = true
-            }
-
-            val criticRating =
-                when (item) {
-                    is AfinityMovie -> item.criticRating
-                    else -> null
-                }
-
-            criticRating?.let { rtRating ->
-                if (needsSeparator) MetadataDot()
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        painter =
-                            painterResource(
-                                id =
-                                    if (rtRating > 60) {
-                                        R.drawable.ic_rotten_tomato_fresh
-                                    } else {
-                                        R.drawable.ic_rotten_tomato_rotten
-                                    }
-                            ),
-                        contentDescription = stringResource(R.string.cd_rotten_tomatoes),
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Text(
-                        text = "${rtRating.toInt()}%",
-                        style =
-                            MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
-                    )
-                }
-                needsSeparator = true
             }
 
             when (item) {
@@ -429,21 +331,27 @@ fun MetadataRow(
                 needsSeparator = true
             }
 
-            val epCount =
-                (item as? AfinityShow)?.episodeCount ?: (item as? AfinitySeason)?.episodeCount ?: 0
-
             when {
                 item is AfinityShow || item is AfinitySeason -> {
                     val totalTicks =
                         if (actualTotalChildTicks > 0) {
                             actualTotalChildTicks
-                        } else if (item.runtimeTicks > 0 && epCount > 0) {
-                            item.runtimeTicks * epCount
+                        } else if (stableRuntimeTicks > 0 && stableEpCount > 0) {
+                            stableRuntimeTicks * stableEpCount
                         } else {
                             0L
                         }
 
-                    if (totalTicks > 0) {
+                    val unplayedTicks =
+                        if (!item.played && unplayedCount > 0) {
+                            stableRuntimeTicks * unplayedCount
+                        } else {
+                            totalTicks
+                        }
+
+                    val displayTicks = if (unplayedTicks > 0) unplayedTicks else totalTicks
+
+                    if (displayTicks > 0) {
                         val hours = (totalTicks / 10_000_000L / 3600L).toInt()
                         val minutes = ((totalTicks / 10_000_000L % 3600L) / 60L).toInt()
                         val runtimeText =
@@ -463,9 +371,9 @@ fun MetadataRow(
                     }
                 }
 
-                isSingleMedia && item.runtimeTicks > 0 -> {
-                    val hours = (item.runtimeTicks / 10_000_000 / 3600).toInt()
-                    val minutes = ((item.runtimeTicks / 10_000_000 % 3600) / 60).toInt()
+                isSingleMedia && stableRuntimeTicks > 0 -> {
+                    val hours = (stableRuntimeTicks / 10_000_000 / 3600).toInt()
+                    val minutes = ((stableRuntimeTicks / 10_000_000 % 3600) / 60).toInt()
                     val runtimeText =
                         if (hours > 0)
                             stringResource(R.string.meta_runtime_hours_minutes, hours, minutes)
@@ -500,6 +408,23 @@ fun MetadataRow(
                 needsSeparator = true
             }
 
+            val partCount =
+                when (item) {
+                    is AfinityMovie -> item.partCount
+                    is AfinityEpisode -> item.partCount
+                    else -> null
+                }
+            if ((partCount ?: 0) > 1) {
+                if (needsSeparator) MetadataDot()
+                Text(
+                    text = stringResource(R.string.meta_parts_fmt, partCount!!),
+                    style =
+                        MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
+                )
+                needsSeparator = true
+            }
+
             val genres =
                 when (item) {
                     is AfinityMovie -> item.genres
@@ -520,133 +445,18 @@ fun MetadataRow(
             }
         }
 
-        AnimatedVisibility(
-            visible = mdbRatings.isNotEmpty(),
-            enter =
-                if (isRatingsFromCache) {
-                    EnterTransition.None
-                } else {
-                    fadeIn(tween(300)) + expandVertically(tween(300))
-                },
-            exit = fadeOut(tween(300)) + shrinkVertically(tween(300)),
-        ) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp, horizontalAlignment),
-                verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                mdbRatings.forEachIndexed { index, rating ->
-                    val sourceLower = rating.source.lowercase()
-                    val rawValue =
-                        if (sourceLower == "metacriticuser") {
-                            rating.score ?: (rating.value?.times(10.0)) ?: return@forEachIndexed
-                        } else {
-                            rating.value ?: return@forEachIndexed
-                        }
-
-                    if (index > 0) MetadataDot()
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        val iconRes =
-                            when (sourceLower) {
-                                "trakt" -> R.drawable.ic_trakt
-                                "tmdb" -> R.drawable.ic_tmdb
-                                "letterboxd" -> R.drawable.ic_letterboxd
-                                "popcorn" ->
-                                    if (rawValue >= 60.0) R.drawable.ic_rt_fresh_popcorn
-                                    else R.drawable.ic_rt_stale_popcorn
-
-                                "metacritic" ->
-                                    when {
-                                        rawValue >= 75.0 -> R.drawable.ic_metacritic_green
-                                        rawValue >= 50.0 -> R.drawable.ic_metacritic_yellow
-                                        else -> R.drawable.ic_metacritic_red
-                                    }
-                                "metacriticuser" ->
-                                    when {
-                                        rawValue >= 75.0 -> R.drawable.ic_metacritic_user_green
-                                        rawValue >= 50.0 -> R.drawable.ic_metacritic_user_yellow
-                                        else -> R.drawable.ic_metacritic_user_red
-                                    }
-                                "rogerebert" -> R.drawable.ic_ebert
-                                "myanimelist" -> R.drawable.ic_mal
-                                else -> null
-                            }
-
-                        if (iconRes != null) {
-                            Icon(
-                                painter = painterResource(id = iconRes),
-                                contentDescription = rating.source,
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        } else {
-                            Text(
-                                text = rating.source.replaceFirstChar { it.uppercase() },
-                                style =
-                                    MaterialTheme.typography.bodySmall.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
-                            )
-                        }
-                        val formattedValue =
-                            if (sourceLower == "metacriticuser") {
-                                String.format(Locale.US, "%.1f", rawValue / 10.0)
-                            } else if (rawValue % 1.0 == 0.0) {
-                                rawValue.toInt().toString()
-                            } else {
-                                rawValue.toString()
-                            }
-
-                        val isPercentage = sourceLower in listOf("trakt", "tmdb", "popcorn")
-                        val displayText = if (isPercentage) "$formattedValue%" else formattedValue
-
-                        Text(
-                            text = displayText,
-                            style =
-                                MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.9f),
-                        )
-                    }
-                }
-            }
-        }
-
-        val epCountForEndsAt =
-            (item as? AfinityShow)?.episodeCount ?: (item as? AfinitySeason)?.episodeCount ?: 0
-
-        val unplayedCount =
-            (item as? AfinityShow)?.unplayedItemCount
-                ?: (item as? AfinitySeason)?.unplayedItemCount
-                ?: epCountForEndsAt
-
         val isContainerItem = item is AfinityShow || item is AfinitySeason || item is AfinityBoxSet
 
         if (isContainerItem) {
+            val totalTicks =
+                if (stableRuntimeTicks > 0 && stableEpCount > 0) stableRuntimeTicks * stableEpCount
+                else actualTotalChildTicks
+
             val remainingTicks =
-                if (actualRemainingChildTicks > 0) {
-                    actualRemainingChildTicks
-                } else if (
-                    (item is AfinityShow || item is AfinitySeason) &&
-                        item.runtimeTicks > 0 &&
-                        epCountForEndsAt > 0
-                ) {
-                    val inProgressRemaining =
-                        if (item.playbackPositionTicks > 0)
-                            (item.runtimeTicks - item.playbackPositionTicks).coerceAtLeast(0L)
-                        else 0L
-                    val fullyUnwatchedCount =
-                        if (item.playbackPositionTicks > 0) (unplayedCount - 1).coerceAtLeast(0)
-                        else unplayedCount
-                    fullyUnwatchedCount.toLong() * item.runtimeTicks + inProgressRemaining
+                if (!item.played && unplayedCount > 0 && stableRuntimeTicks > 0) {
+                    stableRuntimeTicks * unplayedCount
                 } else {
-                    0L
+                    totalTicks
                 }
 
             if (remainingTicks > 0) {
@@ -663,8 +473,9 @@ fun MetadataRow(
         }
         val isSingleMediaEndsAt =
             item is AfinityMovie || item is AfinityEpisode || item is AfinityVideo
-        if (isSingleMediaEndsAt && item.runtimeTicks > 0) {
-            val remainingTicks = (item.runtimeTicks - item.playbackPositionTicks).coerceAtLeast(0L)
+
+        if (isSingleMediaEndsAt && stableRuntimeTicks > 0) {
+            val remainingTicks = stableRuntimeTicks
 
             if (remainingTicks > 0) {
                 val totalMs = remainingTicks / 10_000L
@@ -687,6 +498,7 @@ private fun MetadataDot() {
         text = "•",
         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+        textAlign = TextAlign.Center,
     )
 }
 
@@ -721,7 +533,7 @@ private fun VideoMetadataChipWithIcon(text: String, iconRes: Int) {
             painter = painterResource(id = iconRes),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.size(16.dp).padding(bottom = 1.dp),
+            modifier = Modifier.size(16.dp),
         )
         Text(
             text = text,

@@ -9,19 +9,24 @@ import com.makd.afinity.data.models.common.EpisodeLayout
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
-import com.makd.afinity.data.models.player.SegmentAutoSkipMode
+import com.makd.afinity.data.models.player.SkipMode
 import com.makd.afinity.data.models.player.VideoZoomMode
-import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.user.User
+import com.makd.afinity.data.network.MdbListApiService
+import com.makd.afinity.data.network.OmdbApiService
+import com.makd.afinity.data.network.TmdbApiService
 import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.AudiobookshelfRepository
+import com.makd.afinity.data.repository.DatabaseRepository
 import com.makd.afinity.data.repository.JellyseerrRepository
 import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.repository.SecurePreferencesRepository
 import com.makd.afinity.data.repository.auth.AuthRepository
 import com.makd.afinity.data.repository.server.ServerRepository
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfPlayer
+import com.makd.afinity.ui.settings.servers.ServerWithUserCount
 import com.makd.afinity.util.NetworkConnectivityMonitor
+import com.makd.afinity.util.logging.LogExporter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.NonCancellable
@@ -46,11 +51,15 @@ constructor(
     private val securePreferencesRepository: SecurePreferencesRepository,
     private val appDataRepository: AppDataRepository,
     private val serverRepository: ServerRepository,
+    private val databaseRepository: DatabaseRepository,
     private val offlineModeManager: OfflineModeManager,
     private val networkConnectivityMonitor: NetworkConnectivityMonitor,
     private val jellyseerrRepository: JellyseerrRepository,
     private val audiobookshelfRepository: AudiobookshelfRepository,
     private val audiobookshelfPlayer: AudiobookshelfPlayer,
+    private val tmdbApiService: TmdbApiService,
+    private val mdbListApiService: MdbListApiService,
+    private val omdbApiService: OmdbApiService,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -103,6 +112,27 @@ constructor(
     private val _mdbListApiKey = MutableStateFlow("")
     val mdbListApiKey = _mdbListApiKey.asStateFlow()
 
+    private val _omdbApiKey = MutableStateFlow("")
+    val omdbApiKey: StateFlow<String> = _omdbApiKey.asStateFlow()
+
+    val appFont: StateFlow<String> =
+        preferencesRepository
+            .getAppFontFlow()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = "DEFAULT",
+            )
+
+    val showRatings: StateFlow<Boolean> =
+        preferencesRepository
+            .getShowRatingsFlow()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = true,
+            )
+
     init {
         loadSettings()
     }
@@ -131,17 +161,36 @@ constructor(
                             ) ?: ""
                         } else ""
 
+                    val omdbKey =
+                        if (user != null && server != null) {
+                            securePreferencesRepository.getOmdbApiKey(
+                                server.id,
+                                user.id.toString(),
+                            ) ?: ""
+                        } else ""
+
                     _uiState.value =
                         _uiState.value.copy(
                             currentUser = user,
                             userProfileImageUrl = profileImageUrl,
                             serverName = server?.name,
+                            serverId = server?.id,
                             serverVersion = server?.version,
                             serverUrl = serverRepository.getBaseUrl().ifEmpty { null },
+                            activeServer =
+                                server?.let { s ->
+                                    ServerWithUserCount(
+                                        server = s,
+                                        userCount = 0,
+                                        isActiveServer = true,
+                                    )
+                                },
+                            isAdmin = user?.isAdmin == true,
                             isLoading = false,
                         )
                     _tmdbApiKey.value = tmdbKey
                     _mdbListApiKey.value = mdbListKey
+                    _omdbApiKey.value = omdbKey
 
                     Timber.d(
                         "SettingsViewModel - Updated uiState: user=${user?.name}, server=${server?.name}"
@@ -180,14 +229,14 @@ constructor(
         }
 
         viewModelScope.launch {
-            preferencesRepository.getSkipIntroEnabledFlow().collect {
-                _uiState.value = _uiState.value.copy(skipIntroEnabled = it)
+            preferencesRepository.getSkipIntroModeFlow().collect {
+                _uiState.value = _uiState.value.copy(skipIntroMode = it)
             }
         }
 
         viewModelScope.launch {
-            preferencesRepository.getSkipOutroEnabledFlow().collect {
-                _uiState.value = _uiState.value.copy(skipOutroEnabled = it)
+            preferencesRepository.getSkipOutroModeFlow().collect {
+                _uiState.value = _uiState.value.copy(skipOutroMode = it)
             }
         }
 
@@ -206,24 +255,6 @@ constructor(
         viewModelScope.launch {
             preferencesRepository.dolbyVisionConversion.collect {
                 _uiState.value = _uiState.value.copy(dolbyVisionConversion = it)
-            }
-        }
-
-        viewModelScope.launch {
-            preferencesRepository.cacheForwardSeconds.collect {
-                _uiState.value = _uiState.value.copy(cacheForwardSeconds = it)
-            }
-        }
-
-        viewModelScope.launch {
-            preferencesRepository.cacheBackSeconds.collect {
-                _uiState.value = _uiState.value.copy(cacheBackSeconds = it)
-            }
-        }
-
-        viewModelScope.launch {
-            preferencesRepository.segmentAutoSkipMode.collect {
-                _uiState.value = _uiState.value.copy(segmentAutoSkipMode = it)
             }
         }
 
@@ -303,6 +334,12 @@ constructor(
                 _uiState.value = _uiState.value.copy(castMaxBitrate = it)
             }
         }
+
+        viewModelScope.launch {
+            preferencesRepository.getBufferSizeMbFlow().collect {
+                _uiState.value = _uiState.value.copy(bufferSizeMb = it)
+            }
+        }
     }
 
     fun setThemeMode(mode: String) {
@@ -368,6 +405,26 @@ constructor(
         }
     }
 
+    fun setVideoDecoderPriority(priority: com.makd.afinity.player.exoplayer.DecoderPriority) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setVideoDecoderPriority(priority)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set video decoder priority")
+            }
+        }
+    }
+
+    fun toggleDolbyVisionConversion(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setDolbyVisionConversion(enabled)
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set Dolby Vision conversion")
+            }
+        }
+    }
+
     fun toggleUseExoPlayer(enabled: Boolean) {
         viewModelScope.launch {
             try {
@@ -415,24 +472,24 @@ constructor(
         }
     }
 
-    fun toggleSkipIntro(enabled: Boolean) {
+    fun setSkipIntroMode(mode: SkipMode) {
         viewModelScope.launch {
             try {
-                preferencesRepository.setSkipIntroEnabled(enabled)
-                Timber.d("Skip intro set to: $enabled")
+                preferencesRepository.setSkipIntroMode(mode)
+                Timber.d("Skip intro mode set to: ${mode.name}")
             } catch (e: Exception) {
-                Timber.e(e, "Failed to toggle skip intro")
+                Timber.e(e, "Failed to set skip intro mode")
             }
         }
     }
 
-    fun toggleSkipOutro(enabled: Boolean) {
+    fun setSkipOutroMode(mode: SkipMode) {
         viewModelScope.launch {
             try {
-                preferencesRepository.setSkipOutroEnabled(enabled)
-                Timber.d("Skip outro set to: $enabled")
+                preferencesRepository.setSkipOutroMode(mode)
+                Timber.d("Skip outro mode set to: ${mode.name}")
             } catch (e: Exception) {
-                Timber.e(e, "Failed to toggle skip outro")
+                Timber.e(e, "Failed to set skip outro mode")
             }
         }
     }
@@ -466,61 +523,6 @@ constructor(
                 Timber.d("Default video zoom mode set to: ${mode.getDisplayName()}")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to set default video zoom mode")
-            }
-        }
-    }
-
-    fun setVideoDecoderPriority(priority: DecoderPriority) {
-        viewModelScope.launch {
-            try {
-                preferencesRepository.setVideoDecoderPriority(priority)
-                Timber.d("Video decoder priority set to: ${priority.getDisplayName()}")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to set video decoder priority")
-            }
-        }
-    }
-
-    fun setCacheForwardSeconds(seconds: Int) {
-        viewModelScope.launch {
-            try {
-                preferencesRepository.setCacheForwardSeconds(seconds)
-                Timber.d("Forward cache set to: ${seconds}s")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to set forward cache")
-            }
-        }
-    }
-
-    fun setCacheBackSeconds(seconds: Int) {
-        viewModelScope.launch {
-            try {
-                preferencesRepository.setCacheBackSeconds(seconds)
-                Timber.d("Back cache set to: ${seconds}s")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to set back cache")
-            }
-        }
-    }
-
-    fun setSegmentAutoSkipMode(mode: SegmentAutoSkipMode) {
-        viewModelScope.launch {
-            try {
-                preferencesRepository.setSegmentAutoSkipMode(mode)
-                Timber.d("Segment auto-skip mode set to: ${mode.getDisplayName()}")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to set segment auto-skip mode")
-            }
-        }
-    }
-
-    fun toggleDolbyVisionConversion(enabled: Boolean) {
-        viewModelScope.launch {
-            try {
-                preferencesRepository.setDolbyVisionConversion(enabled)
-                Timber.d("Dolby Vision conversion set to: $enabled")
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to set Dolby Vision conversion")
             }
         }
     }
@@ -598,6 +600,17 @@ constructor(
                 Timber.d("Cast max bitrate set to: $bitrate")
             } catch (e: Exception) {
                 Timber.e(e, "Failed to set cast max bitrate")
+            }
+        }
+    }
+
+    fun setBufferSizeMb(sizeMb: Int) {
+        viewModelScope.launch {
+            try {
+                preferencesRepository.setBufferSizeMb(sizeMb)
+                Timber.d("Buffer size set to: ${sizeMb}MB")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to set buffer size")
             }
         }
     }
@@ -688,6 +701,117 @@ constructor(
         }
     }
 
+    fun validateAndSaveTmdbKey(apiKey: String, onSuccess: () -> Unit) {
+        if (apiKey.isBlank()) {
+            setTmdbApiKey("")
+            onSuccess()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value =
+                _uiState.value.copy(
+                    isTmdbKeyValidating = true,
+                    tmdbKeyValidationError = null,
+                )
+            try {
+                val response = tmdbApiService.validateApiKey(apiKey)
+                if (response.isSuccessful) {
+                    setTmdbApiKey(apiKey)
+                    onSuccess()
+                } else {
+                    _uiState.value =
+                        _uiState.value.copy(tmdbKeyValidationError = "Invalid TMDB API Key")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "TMDB validation network failure")
+                _uiState.value =
+                    _uiState.value.copy(
+                        tmdbKeyValidationError = "Network failure. Please try again."
+                    )
+            } finally {
+                _uiState.value = _uiState.value.copy(isTmdbKeyValidating = false)
+            }
+        }
+    }
+
+    fun validateAndSaveMdbListKey(apiKey: String, onSuccess: () -> Unit) {
+        if (apiKey.isBlank()) {
+            setMdbListApiKey("")
+            onSuccess()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value =
+                _uiState.value.copy(
+                    isMdbListKeyValidating = true,
+                    mdbListKeyValidationError = null,
+                )
+            try {
+                val response = mdbListApiService.validateApiKey(apiKey)
+                if (response.isSuccessful) {
+                    setMdbListApiKey(apiKey)
+                    onSuccess()
+                } else {
+                    _uiState.value =
+                        _uiState.value.copy(mdbListKeyValidationError = "Invalid MDBList API Key")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "MDBList validation network failure")
+                _uiState.value =
+                    _uiState.value.copy(
+                        mdbListKeyValidationError = "Network failure. Please try again."
+                    )
+            } finally {
+                _uiState.value = _uiState.value.copy(isMdbListKeyValidating = false)
+            }
+        }
+    }
+
+    fun validateAndSaveOmdbKey(apiKey: String, onSuccess: () -> Unit) {
+        if (apiKey.isBlank()) {
+            setOmdbApiKey("")
+            onSuccess()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value =
+                _uiState.value.copy(
+                    isOmdbKeyValidating = true,
+                    omdbKeyValidationError = null,
+                )
+            try {
+                val result = omdbApiService.getTitleDetails("tt0111161", apiKey)
+                if (result.response == "True") {
+                    setOmdbApiKey(apiKey)
+                    onSuccess()
+                } else {
+                    _uiState.value =
+                        _uiState.value.copy(omdbKeyValidationError = "Invalid OMDb API Key")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "OMDb validation network failure")
+                _uiState.value =
+                    _uiState.value.copy(
+                        omdbKeyValidationError = "Network failure. Please try again."
+                    )
+            } finally {
+                _uiState.value = _uiState.value.copy(isOmdbKeyValidating = false)
+            }
+        }
+    }
+
+    fun clearApiValidationErrors() {
+        _uiState.value =
+            _uiState.value.copy(
+                tmdbKeyValidationError = null,
+                mdbListKeyValidationError = null,
+                omdbKeyValidationError = null,
+            )
+    }
+
     fun setTmdbApiKey(apiKey: String) {
         viewModelScope.launch {
             try {
@@ -707,6 +831,29 @@ constructor(
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Error saving TMDB API key")
+            }
+        }
+    }
+
+    fun setOmdbApiKey(apiKey: String) {
+        viewModelScope.launch {
+            try {
+                val user = authRepository.currentUser.value
+                val server = serverRepository.currentServer.value
+
+                if (user != null && server != null) {
+                    securePreferencesRepository.saveOmdbApiKey(
+                        server.id,
+                        user.id.toString(),
+                        apiKey,
+                    )
+                    _omdbApiKey.value = apiKey
+                    Timber.d("OMDb API Key updated securely.")
+                } else {
+                    Timber.w("Failed to save OMDb API Key: User or Server is null")
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error saving OMDb API key")
             }
         }
     }
@@ -734,30 +881,110 @@ constructor(
         }
     }
 
+    fun setAppFont(fontName: String) {
+        viewModelScope.launch { preferencesRepository.setAppFont(fontName) }
+    }
+
+    fun toggleShowRatings(enabled: Boolean) {
+        viewModelScope.launch { preferencesRepository.setShowRatings(enabled) }
+    }
+
+    fun authorizeQuickConnect(code: String) {
+        viewModelScope.launch {
+            try {
+                _uiState.value = _uiState.value.copy(
+                    isAuthorizingQuickConnect = true,
+                    quickConnectAuthError = null,
+                    quickConnectAuthSuccess = false,
+                )
+                val authorized = authRepository.authorizeQuickConnect(code)
+                _uiState.value = _uiState.value.copy(
+                    isAuthorizingQuickConnect = false,
+                    quickConnectAuthSuccess = authorized,
+                    quickConnectAuthError = if (!authorized)
+                        context.getString(R.string.error_quickconnect_invalid_code)
+                    else null,
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "QuickConnect authorization failed")
+                _uiState.value = _uiState.value.copy(
+                    isAuthorizingQuickConnect = false,
+                    quickConnectAuthError = context.getString(
+                        R.string.error_quickconnect_failed_fmt, e.message
+                    ),
+                )
+            }
+        }
+    }
+
+    fun clearQuickConnectAuthState() {
+        _uiState.value = _uiState.value.copy(
+            quickConnectAuthSuccess = false,
+            quickConnectAuthError = null,
+        )
+    }
+
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    fun exportLogs() {
+        if (_uiState.value.isExportingLogs) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isExportingLogs = true)
+            val app = context.applicationContext as? com.makd.afinity.AfinityApplication
+            val secrets = buildList {
+                _uiState.value.serverUrl?.let { add(it) }
+                securePreferencesRepository.getAccessToken()?.let { add(it) }
+                securePreferencesRepository.getSavedUsername()?.let { add(it) }
+                securePreferencesRepository.getAllServerUserTokens().forEach { token ->
+                    add(token.serverUrl)
+                    add(token.accessToken)
+                    add(token.username)
+                }
+                databaseRepository.getAllServers().forEach { server ->
+                    add(server.address)
+                    databaseRepository.getServerAddresses(server.id).forEach { sa ->
+                        add(sa.address)
+                    }
+                }
+                securePreferencesRepository.getCachedJellyseerrServerUrl()?.let { add(it) }
+                securePreferencesRepository.getCachedJellyseerrCookie()?.let { add(it) }
+                addAll(jellyseerrRepository.getAllKnownAddresses())
+                securePreferencesRepository.getCachedAudiobookshelfServerUrl()?.let { add(it) }
+                securePreferencesRepository.getCachedAudiobookshelfToken()?.let { add(it) }
+                securePreferencesRepository.getCachedAudiobookshelfRefreshToken()?.let { add(it) }
+                addAll(audiobookshelfRepository.getAllKnownAddresses())
+                _tmdbApiKey.value.takeIf { it.isNotBlank() }?.let { add(it) }
+                _mdbListApiKey.value.takeIf { it.isNotBlank() }?.let { add(it) }
+                _omdbApiKey.value.takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            LogExporter.export(context, app?.ringBufferTree, secrets)
+            _uiState.value = _uiState.value.copy(isExportingLogs = false)
+        }
     }
 }
 
 data class SettingsUiState(
     val currentUser: User? = null,
     val serverName: String? = null,
+    val serverId: String? = null,
     val serverVersion: String? = null,
     val serverUrl: String? = null,
     val userProfileImageUrl: String? = null,
+    val activeServer: ServerWithUserCount? = null,
+    val isAdmin: Boolean = false,
     val themeMode: String = "SYSTEM",
     val dynamicColors: Boolean = true,
     val autoPlay: Boolean = true,
     val pipGestureEnabled: Boolean = false,
     val pipBackgroundPlay: Boolean = true,
-    val skipIntroEnabled: Boolean = true,
-    val skipOutroEnabled: Boolean = true,
+    val skipIntroMode: SkipMode = SkipMode.BUTTON,
+    val skipOutroMode: SkipMode = SkipMode.BUTTON,
     val useExoPlayer: Boolean = true,
-    val videoDecoderPriority: DecoderPriority = DecoderPriority.default,
+    val videoDecoderPriority: com.makd.afinity.player.exoplayer.DecoderPriority =
+        com.makd.afinity.player.exoplayer.DecoderPriority.default,
     val dolbyVisionConversion: Boolean = false,
-    val cacheForwardSeconds: Int = 50,
-    val cacheBackSeconds: Int = 0,
-    val segmentAutoSkipMode: SegmentAutoSkipMode = SegmentAutoSkipMode.default,
     val logoAutoHide: Boolean = false,
     val defaultVideoZoomMode: VideoZoomMode = VideoZoomMode.FIT,
     val mpvHwDec: MpvHwDec = MpvHwDec.default,
@@ -767,7 +994,18 @@ data class SettingsUiState(
     val preferredSubtitleLanguage: String = "",
     val castHevcEnabled: Boolean = false,
     val castMaxBitrate: Int = 16_000_000,
+    val bufferSizeMb: Int = 64,
     val isLoading: Boolean = true,
     val isLoggingOut: Boolean = false,
+    val isExportingLogs: Boolean = false,
     val error: String? = null,
+    val isTmdbKeyValidating: Boolean = false,
+    val tmdbKeyValidationError: String? = null,
+    val isMdbListKeyValidating: Boolean = false,
+    val mdbListKeyValidationError: String? = null,
+    val isOmdbKeyValidating: Boolean = false,
+    val omdbKeyValidationError: String? = null,
+    val isAuthorizingQuickConnect: Boolean = false,
+    val quickConnectAuthSuccess: Boolean = false,
+    val quickConnectAuthError: String? = null,
 )

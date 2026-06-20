@@ -10,6 +10,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
@@ -36,6 +39,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import androidx.navigation.NavController
+import com.makd.afinity.data.models.livetv.LiveTvPlaybackInfo
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.player.PlayerEvent
 import com.makd.afinity.data.models.player.SubtitlePreferences
@@ -44,25 +48,25 @@ import com.makd.afinity.ui.player.cast.CastRemoteControllerScreen
 import com.makd.afinity.ui.player.components.ErrorIndicator
 import com.makd.afinity.ui.player.components.GestureHandler
 import com.makd.afinity.ui.player.components.MpvSurface
+import com.makd.afinity.ui.player.components.PlaybackStatsOverlay
 import com.makd.afinity.ui.player.components.PlayerControls
 import com.makd.afinity.ui.player.components.PlayerIndicators
+import com.makd.afinity.ui.player.components.SyncPlayGroupSheet
+import com.makd.afinity.ui.player.components.SyncPlayWaitingOverlay
 import com.makd.afinity.ui.player.components.TrickplayPreview
 import com.makd.afinity.ui.player.components.VersionPickerSheet
-import com.makd.afinity.ui.player.components.PlaybackInfoOverlay
-import com.makd.afinity.R
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.foundation.layout.size
-import androidx.compose.ui.res.painterResource
 import com.makd.afinity.ui.player.utils.KeepScreenOn
 import com.makd.afinity.ui.player.utils.PlayerSystemBarsController
 import com.makd.afinity.ui.player.utils.ScreenBrightnessController
+import kotlinx.coroutines.flow.map
+import org.jellyfin.sdk.model.api.GroupStateType
 import timber.log.Timber
 import java.util.UUID
 
 @UnstableApi
 @Composable
 fun PlayerScreen(
+    modifier: Modifier = Modifier,
     item: AfinityItem,
     mediaSourceId: String,
     audioStreamIndex: Int? = null,
@@ -72,12 +76,16 @@ fun PlayerScreen(
     shuffle: Boolean = false,
     isLiveChannel: Boolean = false,
     liveStreamUrl: String? = null,
+    livePlaybackInfo: LiveTvPlaybackInfo? = null,
     onBackPressed: () -> Unit,
     navController: NavController? = null,
-    modifier: Modifier = Modifier,
     viewModel: PlayerViewModel = hiltViewModel(),
+    syncPlayViewModel: SyncPlayViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val syncPlayState by syncPlayViewModel.syncPlayState.collectAsStateWithLifecycle()
+    val syncPlayUiState by syncPlayViewModel.uiState.collectAsStateWithLifecycle()
+    val syncPlayMemberInfo by syncPlayViewModel.memberInfoMap.collectAsStateWithLifecycle()
     val playlistState by
         viewModel.playlistState.collectAsStateWithLifecycle(initialValue = PlaylistState())
 
@@ -99,14 +107,17 @@ fun PlayerScreen(
     var showVersionPicker by remember { mutableStateOf(false) }
     LocalLifecycleOwner.current
 
-    LaunchedEffect(item.id, mediaSourceId, isLiveChannel, liveStreamUrl) {
-        if (isLiveChannel && liveStreamUrl != null) {
+    LaunchedEffect(item.id, mediaSourceId, isLiveChannel, liveStreamUrl, uiState.isPlayerReady) {
+        if (!uiState.isPlayerReady) return@LaunchedEffect
+
+        if (isLiveChannel && liveStreamUrl != null && livePlaybackInfo != null) {
             Timber.d("Loading live channel: ${item.name}")
             viewModel.handlePlayerEvent(
                 PlayerEvent.LoadLiveChannel(
                     channelId = item.id,
                     channelName = item.name,
                     streamUrl = liveStreamUrl,
+                    playbackInfo = livePlaybackInfo,
                 )
             )
         } else {
@@ -122,12 +133,67 @@ fun PlayerScreen(
             )
         }
     }
+    LaunchedEffect(Unit) {
+        viewModel.syncPlayInterceptor = SyncPlayInterceptor { event ->
+            syncPlayViewModel.handleLocalPlayerEvent(event)
+        }
+        syncPlayViewModel.setPlayerActions(
+            object : SyncPlayPlayerActions {
+                override fun executePlay() = viewModel.executeScheduledPlay()
+
+                override fun executePause() = viewModel.executeScheduledPause()
+
+                override fun executeSeek(positionMs: Long) =
+                    viewModel.executeScheduledSeek(positionMs)
+
+                override val currentPositionMs: Long
+                    get() = viewModel.player.currentPosition
+
+                override val currentIsPlaying: Boolean
+                    get() = viewModel.player.isPlaying
+
+                override val currentItemId: UUID?
+                    get() = viewModel.currentPlayingItemId
+            }
+        )
+        syncPlayViewModel.setBufferingFlow(viewModel.uiState.map { it.isBuffering })
+    }
+
+    LaunchedEffect(Unit) {
+        syncPlayViewModel.effects.collect { effect ->
+            when (effect) {
+                is SyncPlayEffect.LoadContent -> viewModel.handlePlayerEvent(
+                    PlayerEvent.LoadMedia(
+                        item = effect.item,
+                        mediaSourceId = effect.mediaSourceId,
+                        startPositionMs = effect.startPositionMs,
+                    )
+                )
+                is SyncPlayEffect.GroupJoined -> syncPlayViewModel.dismissGroupSheet()
+                else -> {}
+            }
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> syncPlayViewModel.onAppBackground()
+                Lifecycle.Event.ON_RESUME -> syncPlayViewModel.onAppForeground()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var hasNavigatedBack by remember { mutableStateOf(false) }
 
     BackHandler {
         if (!hasNavigatedBack) {
             hasNavigatedBack = true
+            if (syncPlayState.isInGroup) syncPlayViewModel.leaveGroup()
             viewModel.stopPlayback()
             onBackPressed()
         }
@@ -167,7 +233,12 @@ fun PlayerScreen(
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        if (castState.isConnected && castState.currentItem != null) {
+        if (!uiState.isPlayerReady) {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        } else if (castState.isConnected && castState.currentItem != null) {
             CastRemoteControllerScreen(
                 castState = castState,
                 castManager = viewModel.castManager,
@@ -225,7 +296,7 @@ fun PlayerScreen(
                             seekOriginTime = viewModel.player.currentPosition
                             viewModel.handlePlayerEvent(PlayerEvent.OnSeekBarDragStart)
                         } else {
-                            viewModel.handlePlayerEvent(PlayerEvent.OnSeekBarDragFinished)
+                            viewModel.handlePlayerEvent(PlayerEvent.OnSeekBarDragFinished(viewModel.uiState.value.seekPosition))
                         }
                     }
                 },
@@ -248,8 +319,10 @@ fun PlayerScreen(
                                         useController = false
                                         subtitleView?.visibility = android.view.View.GONE
                                         this.player = player
-                                        viewModel.setPlayerView(this)
                                     }
+                                },
+                                update = { view ->
+                                    view.resizeMode = uiState.videoZoomMode.toExoPlayerResizeMode()
                                 },
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -259,6 +332,7 @@ fun PlayerScreen(
                     is MPVPlayer -> {
                         MpvSurface(
                             modifier = Modifier.fillMaxSize(),
+                            mpv = player.mpv,
                             videoOutput = viewModel.mpvVideoOutputValue,
                             onSurfaceCreated = { Timber.d("MPV surface created in player screen") },
                             onSurfaceDestroyed = {
@@ -284,6 +358,7 @@ fun PlayerScreen(
                 onBackClick = {
                     if (!hasNavigatedBack) {
                         hasNavigatedBack = true
+                        if (syncPlayState.isInGroup) syncPlayViewModel.leaveGroup()
                         viewModel.stopPlayback()
                         onBackPressed()
                     }
@@ -293,35 +368,18 @@ fun PlayerScreen(
                 onPipToggle = { viewModel.handlePlayerEvent(PlayerEvent.EnterPictureInPicture) },
                 playlistQueue = playlistState.queue,
                 currentPlaylistIndex = playlistState.currentIndex,
+                playlistContentStartIndex = playlistState.contentStartIndex,
                 onJumpToEpisode = viewModel::jumpToEpisode,
                 onVersionToggleRequest = { showVersionPicker = !showVersionPicker },
+                isSyncPlay = syncPlayState.isInGroup,
+                onSyncPlayClick = { syncPlayViewModel.toggleGroupSheet() },
+                syncPlayMembers = syncPlayState.members,
+                syncPlayGroupName = syncPlayState.groupName,
+                syncPlayMemberInfo = syncPlayMemberInfo,
             )
 
-            if (uiState.showControls && !uiState.isInPictureInPictureMode) {
-                IconButton(
-                    onClick = { viewModel.togglePlaybackInfo() },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 72.dp, end = 16.dp)
-                        .size(36.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_info),
-                        contentDescription = "Playback info",
-                        tint = if (uiState.showPlaybackInfo) Color.White else Color.White.copy(alpha = 0.6f),
-                    )
-                }
-            }
-
-            if (uiState.showPlaybackInfo && !uiState.isInPictureInPictureMode) {
-                viewModel.buildPlaybackInfo()?.let { info ->
-                    PlaybackInfoOverlay(
-                        info = info,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(top = 72.dp, start = 16.dp),
-                    )
-                }
+            if (syncPlayState.isInGroup && syncPlayState.groupState == GroupStateType.WAITING) {
+                SyncPlayWaitingOverlay(modifier = Modifier.fillMaxSize())
             }
 
             TrickplayPreview(
@@ -352,7 +410,13 @@ fun PlayerScreen(
                 modifier = Modifier.align(Alignment.Center),
             )
 
-            // Version picker — rendered here so align(BottomEnd) maps to the actual screen Box
+            if (uiState.showPlaybackStats) {
+                PlaybackStatsOverlay(
+                    stats = uiState.playbackStats,
+                    onClose = { viewModel.handlePlayerEvent(PlayerEvent.TogglePlaybackStats) },
+                )
+            }
+
             if (showVersionPicker && uiState.availableSources.size > 1) {
                 Box(
                     modifier =
@@ -370,7 +434,8 @@ fun PlayerScreen(
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                ) { /* consume */
+                                ) {
+                                    /* consume */
                                 }
                     ) {
                         VersionPickerSheet(
@@ -386,6 +451,18 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+
+    if (syncPlayUiState.showGroupSheet) {
+        SyncPlayGroupSheet(
+            syncPlayState = syncPlayState,
+            uiState = syncPlayUiState,
+            onCreateGroup = { name -> syncPlayViewModel.createGroup(name) },
+            onJoinGroup = { id -> syncPlayViewModel.joinGroup(id) },
+            onLeaveGroup = { syncPlayViewModel.leaveGroup() },
+            onRefreshGroups = { syncPlayViewModel.loadGroups() },
+            onDismiss = { syncPlayViewModel.dismissGroupSheet() },
+        )
     }
 
     ScreenBrightnessController(brightness = uiState.brightnessLevel)

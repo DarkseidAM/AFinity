@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import org.jellyfin.sdk.model.api.UserItemDataDto
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
@@ -122,6 +123,10 @@ constructor(
 
     override suspend fun getServerAddresses(serverId: String): List<ServerAddress> {
         return serverAddressDao.getServerAddresses(serverId)
+    }
+
+    override suspend fun getServerAddressByUrl(serverId: String, address: String): ServerAddress? {
+        return serverAddressDao.getServerAddressByUrl(serverId, address)
     }
 
     override suspend fun getServerWithAddresses(serverId: String): ServerWithAddresses? {
@@ -406,6 +411,23 @@ constructor(
         userDataDao.updateUserData(userData)
     }
 
+    override suspend fun patchUserDataLocally(
+        itemId: UUID,
+        userId: UUID,
+        serverId: String,
+        userData: UserItemDataDto,
+    ) {
+        userDataDao.patchUserDataLocally(
+            itemId = itemId,
+            userId = userId,
+            serverId = serverId,
+            isPlayed = userData.played ?: false,
+            positionTicks = userData.playbackPositionTicks ?: 0L,
+            isFavorite = userData.isFavorite ?: false,
+            isLiked = userData.likes ?: false,
+        )
+    }
+
     override suspend fun deleteUserData(userId: UUID, itemId: UUID) {
         val serverId = sessionManager.currentSession.value?.serverId ?: return
         userDataDao.deleteUserDataByIds(userId, itemId, serverId)
@@ -527,9 +549,7 @@ constructor(
     }
 
     override suspend fun clearServerData(serverId: String) {
-        movieDao.deleteMoviesByServerId(serverId)
-        showDao.deleteShowsByServerId(serverId)
-        episodeDao.deleteEpisodesByServerId(serverId)
+        serverDatabaseDao.clearAllDataForServer(serverId)
     }
 
     override suspend fun clearUserData(userId: UUID) {
@@ -761,6 +781,18 @@ constructor(
         return serverDatabaseDao.getTotalBytesAllServers()
     }
 
+    override suspend fun getTotalBytesPerVolumeForServer(serverId: String): Map<String, Long> {
+        return serverDatabaseDao.getTotalBytesPerVolumeForServer(serverId).associate {
+            it.storageVolumeId to it.totalBytes
+        }
+    }
+
+    override suspend fun getTotalBytesPerVolumeAllServers(): Map<String, Long> {
+        return serverDatabaseDao.getTotalBytesPerVolume().associate {
+            it.storageVolumeId to it.totalBytes
+        }
+    }
+
     override suspend fun backfillEmptyServerIds(serverId: String, userId: UUID) {
         serverDatabaseDao.backfillEmptyServerIds(serverId, userId)
     }
@@ -773,8 +805,12 @@ constructor(
         return serverDatabaseDao.getSources(itemId)
     }
 
-    override suspend fun getItemMetadata(itemId: UUID): ItemMetadataCacheEntity? {
-        return itemMetadataCacheDao.getMetadata(itemId)
+    override suspend fun getItemMetadata(
+        itemId: UUID,
+        serverId: String,
+        userId: String,
+    ): ItemMetadataCacheEntity? {
+        return itemMetadataCacheDao.getMetadata(itemId, serverId, userId)
     }
 
     override suspend fun insertItemMetadata(metadata: ItemMetadataCacheEntity) {

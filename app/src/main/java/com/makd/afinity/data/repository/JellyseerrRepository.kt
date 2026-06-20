@@ -18,6 +18,8 @@ data class RequestEvent(val request: JellyseerrRequest)
 
 interface JellyseerrRepository {
 
+    suspend fun verifyServer(url: String): Boolean
+
     suspend fun setActiveJellyfinSession(serverId: String, userId: UUID)
 
     fun clearActiveSession()
@@ -44,6 +46,8 @@ interface JellyseerrRepository {
     suspend fun getServerUrl(): String?
 
     suspend fun hasValidConfiguration(): Boolean
+
+    suspend fun getAllKnownAddresses(): List<String>
 
     suspend fun createRequest(
         mediaId: Int,

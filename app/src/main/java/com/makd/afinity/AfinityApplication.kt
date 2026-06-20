@@ -6,10 +6,10 @@ import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
+import coil3.annotation.ExperimentalCoilApi
 import coil3.disk.DiskCache
 import coil3.gif.AnimatedImageDecoder
 import coil3.memory.MemoryCache
-import coil3.annotation.ExperimentalCoilApi
 import coil3.network.cachecontrol.CacheControlCacheStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.CachePolicy
@@ -19,15 +19,14 @@ import com.makd.afinity.cast.CastManager
 import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.updater.UpdateScheduler
 import com.makd.afinity.data.updater.models.UpdateCheckFrequency
+import com.makd.afinity.di.ImageClient
+import com.makd.afinity.util.logging.CrashFileExporter
+import com.makd.afinity.util.logging.RingBufferTree
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import com.makd.afinity.di.ImageClient
 import okhttp3.OkHttpClient
 import okio.Path.Companion.toOkioPath
 import timber.log.Timber
@@ -36,40 +35,46 @@ import javax.inject.Inject
 @HiltAndroidApp
 class AfinityApplication : Application(), Configuration.Provider, SingletonImageLoader.Factory {
 
-    @Inject
-    lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var workerFactory: HiltWorkerFactory
 
-    @Inject
-    lateinit var updateScheduler: UpdateScheduler
+    @Inject lateinit var updateScheduler: UpdateScheduler
 
-    @Inject
-    lateinit var preferencesRepository: PreferencesRepository
+    @Inject lateinit var preferencesRepository: PreferencesRepository
 
-    @Inject
-    lateinit var castManager: CastManager
+    @Inject lateinit var castManager: CastManager
 
-    @Inject
-    @ImageClient
-    lateinit var imageOkHttpClient: OkHttpClient
+    @Inject @ImageClient lateinit var imageOkHttpClient: OkHttpClient
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    var ringBufferTree: RingBufferTree? = null
+        private set
 
-    private lateinit var imageLoaderPrefs: Deferred<Pair<Boolean, Int>>
+    @Volatile private var imageCacheEnabled: Boolean = true
+    @Volatile private var imageCacheSizeMb: Int = 512
 
     override fun onCreate() {
         super.onCreate()
 
-        imageLoaderPrefs = applicationScope.async(Dispatchers.IO) {
-            Pair(
-                preferencesRepository.getImageCacheEnabled(),
-                preferencesRepository.getImageCacheSizeMb(),
+        applicationScope.launch(Dispatchers.IO) {
+            Timber.d("ImageLoader prefs: reading from DataStore")
+            imageCacheEnabled = preferencesRepository.getImageCacheEnabled()
+            imageCacheSizeMb = preferencesRepository.getImageCacheSizeMb()
+            Timber.d(
+                "ImageLoader prefs: cacheEnabled=$imageCacheEnabled, cacheSizeMb=$imageCacheSizeMb"
             )
         }
 
+        val tree = RingBufferTree()
+        ringBufferTree = tree
+        Timber.plant(tree)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
             Timber.d("Afinity Application started")
         }
+
+        Thread.setDefaultUncaughtExceptionHandler(
+            CrashFileExporter(this, ringBufferTree, Thread.getDefaultUncaughtExceptionHandler())
+        )
 
         castManager.initialize(this)
 
@@ -86,14 +91,20 @@ class AfinityApplication : Application(), Configuration.Provider, SingletonImage
 
     @OptIn(ExperimentalCoilApi::class)
     override fun newImageLoader(context: PlatformContext): ImageLoader {
-        val (isCacheEnabled, cacheSizeMb) = runBlocking { imageLoaderPrefs.await() }
+        val isCacheEnabled = imageCacheEnabled
+        val cacheSizeMb = imageCacheSizeMb
+        Timber.d(
+            "ImageLoader: creating singleton (cacheEnabled=$isCacheEnabled, cacheSizeMb=$cacheSizeMb)"
+        )
 
         return ImageLoader.Builder(context)
             .components {
-                add(OkHttpNetworkFetcherFactory(
-                    callFactory = { imageOkHttpClient },
-                    cacheStrategy = { CacheControlCacheStrategy() },
-                ))
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = { imageOkHttpClient },
+                        cacheStrategy = { CacheControlCacheStrategy() },
+                    )
+                )
                 add(SvgDecoder.Factory())
                 add(AnimatedImageDecoder.Factory())
             }
@@ -104,9 +115,7 @@ class AfinityApplication : Application(), Configuration.Provider, SingletonImage
                     .weakReferencesEnabled(true)
                     .build()
             }
-            .diskCachePolicy(
-                if (isCacheEnabled) CachePolicy.ENABLED else CachePolicy.DISABLED
-            )
+            .diskCachePolicy(if (isCacheEnabled) CachePolicy.ENABLED else CachePolicy.DISABLED)
             .diskCache {
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache").toOkioPath())

@@ -1,5 +1,6 @@
 package com.makd.afinity.ui.library
 
+import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,22 +8,26 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import androidx.paging.filter
 import androidx.paging.map
-import com.makd.afinity.data.manager.PlaybackEvent
-import com.makd.afinity.data.manager.PlaybackStateManager
+import com.makd.afinity.R
+import com.makd.afinity.data.manager.AdminChangeBroadcaster
+import com.makd.afinity.data.manager.MediaChangeManager
+import com.makd.afinity.data.manager.MediaChangeSource
 import com.makd.afinity.data.models.common.CollectionType
 import com.makd.afinity.data.models.common.SortBy
-import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
-import com.makd.afinity.data.models.media.AfinitySeason
 import com.makd.afinity.data.repository.AppDataRepository
-import com.makd.afinity.data.repository.JellyfinRepository
 import com.makd.afinity.data.repository.PreferencesRepository
+import com.makd.afinity.data.repository.media.MediaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -38,13 +43,16 @@ enum class FilterType {
     FAVORITES,
 }
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class LibraryContentViewModel
 @Inject
 constructor(
-    private val jellyfinRepository: JellyfinRepository,
+    @param:ApplicationContext private val context: Context,
+    private val mediaRepository: MediaRepository,
     private val appDataRepository: AppDataRepository,
-    private val playbackStateManager: PlaybackStateManager,
+    private val adminChangeBroadcaster: AdminChangeBroadcaster,
+    private val mediaChangeManager: MediaChangeManager,
     private val preferencesRepository: PreferencesRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
@@ -64,6 +72,9 @@ constructor(
     val uiState: StateFlow<LibraryContentUiState> = _uiState.asStateFlow()
 
     private val _itemUpdates = MutableStateFlow<Map<UUID, AfinityItem>>(emptyMap())
+    private val pendingUpdates = mutableMapOf<UUID, AfinityItem>()
+    private val libraryUpdateTrigger = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private var lastLoadedAt = 0L
 
     private fun applyUpdatesToPagingFlow(
         baseFlow: Flow<PagingData<AfinityItem>>
@@ -114,27 +125,48 @@ constructor(
             }
         }
         viewModelScope.launch {
-            playbackStateManager.playbackEvents.collect { event ->
-                if (event is PlaybackEvent.Synced) {
-                    val syncedItem = jellyfinRepository.getItemById(event.itemId) ?: return@collect
-                    val targetItem =
-                        when (syncedItem) {
-                            is AfinityEpisode -> jellyfinRepository.getItemById(syncedItem.seriesId)
-                            is AfinitySeason -> jellyfinRepository.getItemById(syncedItem.seriesId)
-                            else -> syncedItem
-                        } ?: return@collect
-                    _itemUpdates.value += (targetItem.id to targetItem)
+            appDataRepository.userProfileImageUrl.collect { url ->
+                _uiState.update { it.copy(userProfileImageUrl = url) }
+            }
+        }
+        viewModelScope.launch {
+            libraryUpdateTrigger.debounce(300L).collect {
+                if (pendingUpdates.isNotEmpty()) {
+                    _itemUpdates.value += pendingUpdates
+                    pendingUpdates.clear()
+                    Timber.d("Applied batched PagingData updates to Library")
                 }
             }
         }
-    }
 
-    private suspend fun loadUserProfileImage(): String? {
-        return try {
-            jellyfinRepository.getUserProfileImageUrl()
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to get user profile image URL")
-            null
+        viewModelScope.launch {
+            adminChangeBroadcaster.itemChanged.collect { loadItems() }
+        }
+
+        viewModelScope.launch {
+            mediaChangeManager.mediaChanges.collect { event ->
+                event.updatedItem?.let { pendingUpdates[it.id] = it }
+                event.parentItem?.let { pendingUpdates[it.id] = it }
+                event.seasonItem?.let { pendingUpdates[it.id] = it }
+
+                if (event.source == MediaChangeSource.WEBSOCKET) {
+                    try {
+                        val directItem = mediaRepository.getItemById(event.itemId)
+                        directItem?.let { pendingUpdates[it.id] = it }
+
+                        if (event.seriesId != null && event.seriesId != event.itemId) {
+                            val seriesItem = mediaRepository.getItemById(event.seriesId)
+                            seriesItem?.let { pendingUpdates[it.id] = it }
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to resolve items for granular update: ${event.itemId}")
+                    }
+                }
+
+                if (pendingUpdates.isNotEmpty()) {
+                    libraryUpdateTrigger.tryEmit(Unit)
+                }
+            }
         }
     }
 
@@ -145,7 +177,7 @@ constructor(
         }
 
         return try {
-            val libraries = jellyfinRepository.getLibraries()
+            val libraries = mediaRepository.getLibraries()
             val library = libraries.find { it.id.toString() == libraryId }
             Timber.d("Library '$libraryName' has type: ${library?.type}")
             library?.type ?: CollectionType.Mixed
@@ -154,8 +186,8 @@ constructor(
             val name = libraryName ?: ""
             when {
                 name.contains("TV", ignoreCase = true) ||
-                        name.contains("Shows", ignoreCase = true) ||
-                        name.contains("Series", ignoreCase = true) -> CollectionType.TvShows
+                    name.contains("Shows", ignoreCase = true) ||
+                    name.contains("Series", ignoreCase = true) -> CollectionType.TvShows
 
                 name.contains("Movie", ignoreCase = true) -> CollectionType.Movies
                 else -> CollectionType.Mixed
@@ -168,7 +200,7 @@ constructor(
         _itemUpdates.value = emptyMap()
 
         val baseFlow =
-            jellyfinRepository.getItemsPaging(
+            mediaRepository.getItemsPaging(
                 parentId = libraryId?.let { UUID.fromString(it) },
                 libraryType = type,
                 sortBy = currentSortBy,
@@ -185,7 +217,6 @@ constructor(
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
             try {
-                val userProfileImageUrl = loadUserProfileImage()
                 val type = determineLibraryType()
                 libraryType = type
 
@@ -195,7 +226,6 @@ constructor(
                 _uiState.value =
                     _uiState.value.copy(
                         libraryType = type,
-                        userProfileImageUrl = userProfileImageUrl,
                         currentSortBy = currentSortBy,
                         currentSortDescending = currentSortDescending,
                         currentFilter = currentFilter,
@@ -203,14 +233,21 @@ constructor(
                     )
 
                 loadItems()
+                lastLoadedAt = System.currentTimeMillis()
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load library content")
                 _uiState.value =
                     _uiState.value.copy(
                         isLoading = false,
-                        error = "Content not available on this server",
+                        error = context.getString(R.string.error_content_unavailable_server),
                     )
             }
+        }
+    }
+
+    fun onScreenResumed() {
+        if (appDataRepository.lastUserDataChangedAt.value > lastLoadedAt) {
+            lastLoadedAt = System.currentTimeMillis()
         }
     }
 
@@ -268,7 +305,7 @@ constructor(
                 _itemUpdates.value = emptyMap()
 
                 val baseFlow =
-                    jellyfinRepository.getItemsPaging(
+                    mediaRepository.getItemsPaging(
                         parentId = libraryId?.let { UUID.fromString(it) },
                         libraryType = type,
                         sortBy = currentSortBy,

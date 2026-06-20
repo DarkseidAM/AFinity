@@ -1,24 +1,30 @@
 package com.makd.afinity.data.manager
 
 import android.content.Context
-import com.makd.afinity.BuildConfig
 import com.makd.afinity.data.models.server.Server
 import com.makd.afinity.data.models.user.User
 import com.makd.afinity.data.repository.AudiobookshelfRepository
 import com.makd.afinity.data.repository.DatabaseRepository
 import com.makd.afinity.data.repository.JellyseerrRepository
 import com.makd.afinity.data.repository.SecurePreferencesRepository
+import com.makd.afinity.data.repository.server.AddressResolutionResult
+import com.makd.afinity.data.repository.server.ServerAddressResolver
 import com.makd.afinity.data.repository.server.ServerRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
+import org.jellyfin.sdk.api.client.exception.InvalidStatusException
 import org.jellyfin.sdk.api.okhttp.OkHttpFactory
-import org.jellyfin.sdk.createJellyfin
-import org.jellyfin.sdk.model.ClientInfo
+import org.jellyfin.sdk.api.operations.UserApi
 import timber.log.Timber
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -31,6 +37,7 @@ data class Session(
     val serverUrl: String,
     val user: User? = null,
     val server: Server? = null,
+    val isAdmin: Boolean? = null,
 )
 
 @Singleton
@@ -39,17 +46,22 @@ class SessionManager
 constructor(
     private val serverRepository: ServerRepository,
     private val databaseRepository: DatabaseRepository,
-    private val sessionPreferences: SessionPreferences,
     private val securePrefsRepository: SecurePreferencesRepository,
     private val jellyseerrRepository: JellyseerrRepository,
     private val audiobookshelfRepository: AudiobookshelfRepository,
+    private val serverAddressResolver: ServerAddressResolver,
     private val okHttpFactory: OkHttpFactory,
+    private val jellyfin: Jellyfin,
     @param:ApplicationContext private val context: Context,
 ) {
     private val _currentSession = MutableStateFlow<Session?>(null)
     val currentSession: StateFlow<Session?> = _currentSession.asStateFlow()
 
+    private val _isServerReachable = MutableStateFlow(true)
+    val isServerReachable: StateFlow<Boolean> = _isServerReachable.asStateFlow()
+
     private val apiClients = ConcurrentHashMap<String, ApiClient>()
+    private val sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun startSession(
         serverUrl: String,
@@ -62,16 +74,66 @@ constructor(
                 val user = databaseRepository.getUser(userId)
                 val server = databaseRepository.getServer(serverId)
 
-                serverRepository.setBaseUrl(serverUrl)
+                val validator: suspend (String) -> Boolean = { address ->
+                    try {
+                        val tempClient =
+                            jellyfin.createApi(baseUrl = address).also {
+                                it.update(accessToken = accessToken)
+                            }
+                        val response =
+                            withTimeoutOrNull(3000L) { UserApi(tempClient).getCurrentUser() }
+                        response?.content != null
+                    } catch (e: InvalidStatusException) {
+                        if (e.status == 401) throw e
+                        false
+                    } catch (_: Exception) {
+                        false
+                    }
+                }
 
-                val apiClient = getOrCreateApiClient(serverId, serverUrl)
-                apiClient.update(baseUrl = serverUrl, accessToken = accessToken)
+                var authRejected = false
+                val resolvedUrl =
+                    try {
+                        val result = serverAddressResolver.resolveAddress(serverId, validator)
+                        if (result is AddressResolutionResult.Success) {
+                            Timber.d(
+                                "Resolved server address: ${result.address} (saved: $serverUrl)"
+                            )
+                            _isServerReachable.value = true
+                            result.address
+                        } else {
+                            Timber.w(
+                                "Address resolution failed, starting in offline mode. Saved URL: $serverUrl"
+                            )
+                            _isServerReachable.value = false
+                            serverUrl
+                        }
+                    } catch (e: InvalidStatusException) {
+                        Timber.e("Token rejected by server during address resolution (401)")
+                        authRejected = true
+                        serverUrl
+                    } catch (e: Exception) {
+                        Timber.w(
+                            e,
+                            "Address resolution error, starting in offline mode. Saved URL: $serverUrl",
+                        )
+                        _isServerReachable.value = false
+                        serverUrl
+                    }
+
+                if (authRejected)
+                    return@withContext Result.failure(InvalidStatusException(401, null))
+
+                serverRepository.setBaseUrl(resolvedUrl)
+
+                val apiClient = getOrCreateApiClient(serverId, resolvedUrl)
+                apiClient.update(baseUrl = resolvedUrl, accessToken = accessToken)
 
                 securePrefsRepository.saveAuthenticationData(
                     accessToken = accessToken,
                     userId = userId,
                     serverId = serverId,
-                    serverUrl = serverUrl,
+                    serverUrl = resolvedUrl,
                     username = user?.name ?: "User",
                 )
 
@@ -81,32 +143,82 @@ constructor(
                         userId = userId,
                         accessToken = accessToken,
                         username = user.name,
-                        serverUrl = serverUrl,
+                        serverUrl = resolvedUrl,
                     )
                 }
-
-                jellyseerrRepository.setActiveJellyfinSession(serverId, userId)
-                Timber.d("Linked Jellyseerr session for user: $userId")
-
-                audiobookshelfRepository.setActiveJellyfinSession(serverId, userId)
-                Timber.d("Linked Audiobookshelf session for user: $userId")
 
                 _currentSession.value =
                     Session(
                         serverId = serverId,
                         userId = userId,
-                        serverUrl = serverUrl,
+                        serverUrl = resolvedUrl,
                         user = user,
                         server = server,
+                        isAdmin = user?.isAdmin == true,
                     )
 
-                sessionPreferences.saveActiveSession(serverId, userId, serverUrl)
+                securePrefsRepository.saveActiveSession(serverId, userId, resolvedUrl)
+                sessionScope.launch {
+                    try {
+                        val userDto = UserApi(apiClient).getCurrentUser().content
+                        val isAdmin = userDto.policy?.isAdministrator == true
+                        val refreshedUser =
+                            user?.copy(isAdmin = isAdmin)
+                                ?: User(
+                                    id = userDto.id,
+                                    name = userDto.name ?: "",
+                                    serverId = serverId,
+                                    accessToken = accessToken,
+                                    primaryImageTag = userDto.primaryImageTag,
+                                    isAdmin = isAdmin,
+                                )
+                        databaseRepository.insertUser(refreshedUser)
+                        val current = _currentSession.value
+                        if (current?.serverId == serverId && current.userId == userId) {
+                            _currentSession.value =
+                                current.copy(isAdmin = isAdmin, user = refreshedUser)
+                        }
+                        Timber.d("Admin status refreshed from policy: isAdmin=$isAdmin")
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to refresh user policy; using cached isAdmin")
+                    }
+                }
+                sessionScope.launch {
+                    try {
+                        jellyseerrRepository.setActiveJellyfinSession(serverId, userId)
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to link Jellyseerr session")
+                    }
+                }
+                sessionScope.launch {
+                    try {
+                        audiobookshelfRepository.setActiveJellyfinSession(serverId, userId)
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to link Audiobookshelf session")
+                    }
+                }
+
                 Result.success(Unit)
             } catch (e: Exception) {
                 Timber.e(e, "Failed to start session")
                 Result.failure(e)
             }
         }
+
+    fun setServerReachable(reachable: Boolean) {
+        _isServerReachable.value = reachable
+    }
+
+    suspend fun updateSessionUrl(newUrl: String) {
+        val current = _currentSession.value ?: return
+        if (current.serverUrl == newUrl) return
+
+        _currentSession.value = current.copy(serverUrl = newUrl)
+        apiClients[current.serverId]?.update(baseUrl = newUrl)
+        securePrefsRepository.saveActiveSession(current.serverId, current.userId, newUrl)
+
+        Timber.d("Session URL updated: $newUrl")
+    }
 
     fun updateCurrentUser(user: User) {
         val current = _currentSession.value
@@ -155,7 +267,7 @@ constructor(
             return
         }
 
-        sessionPreferences.clearSession()
+        securePrefsRepository.clearActiveSession()
         jellyseerrRepository.clearActiveSession()
         audiobookshelfRepository.clearActiveSession()
         _currentSession.value = null
@@ -175,12 +287,6 @@ constructor(
         }
 
         Timber.d("Creating NEW ApiClient for server: $serverId with baseUrl: $serverUrl")
-        val jellyfin = createJellyfin {
-            this.context = this@SessionManager.context
-            this.clientInfo = ClientInfo(name = "AFinity", version = BuildConfig.VERSION_NAME)
-            this.apiClientFactory = okHttpFactory
-            this.socketConnectionFactory = okHttpFactory
-        }
         val newClient = jellyfin.createApi(baseUrl = serverUrl)
         apiClients[serverId] = newClient
         return newClient

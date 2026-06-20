@@ -7,11 +7,12 @@ import com.makd.afinity.R
 import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.livetv.AfinityChannel
 import com.makd.afinity.data.models.livetv.ChannelType
+import com.makd.afinity.data.models.livetv.LiveTvPlaybackInfo
 import com.makd.afinity.data.models.media.AfinityImages
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.repository.DatabaseRepository
-import com.makd.afinity.data.repository.JellyfinRepository
 import com.makd.afinity.data.repository.livetv.LiveTvRepository
+import com.makd.afinity.data.repository.media.MediaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.async
@@ -28,7 +29,7 @@ class PlayerWrapperViewModel
 @Inject
 constructor(
     @param:ApplicationContext private val context: Context,
-    private val jellyfinRepository: JellyfinRepository,
+    private val mediaRepository: MediaRepository,
     private val databaseRepository: DatabaseRepository,
     private val sessionManager: SessionManager,
     private val liveTvRepository: LiveTvRepository,
@@ -42,6 +43,9 @@ constructor(
 
     private val _liveStreamUrl = MutableStateFlow<String?>(null)
     val liveStreamUrl: StateFlow<String?> = _liveStreamUrl.asStateFlow()
+
+    private val _livePlaybackInfo = MutableStateFlow<LiveTvPlaybackInfo?>(null)
+    val livePlaybackInfo: StateFlow<LiveTvPlaybackInfo?> = _livePlaybackInfo.asStateFlow()
 
     private val _streamError = MutableStateFlow<String?>(null)
     val streamError: StateFlow<String?> = _streamError.asStateFlow()
@@ -64,18 +68,18 @@ constructor(
             _item.value = placeholderChannel
 
             try {
-                val channelDeferred =
-                    viewModelScope.async {
-                        try {
-                            liveTvRepository.getChannel(channelId)
-                        } catch (e: Exception) {
-                            Timber.w(e, "Failed to load channel details, using placeholder")
-                            null
-                        }
+                val channelDeferred = viewModelScope.async {
+                    try {
+                        liveTvRepository.getChannel(channelId)
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to load channel details, using placeholder")
+                        null
                     }
+                }
 
-                val streamUrlDeferred =
-                    viewModelScope.async { liveTvRepository.getChannelStreamUrl(channelId) }
+                val playbackInfoDeferred = viewModelScope.async {
+                    liveTvRepository.getChannelPlaybackInfo(channelId)
+                }
 
                 val channel = channelDeferred.await()
                 if (channel != null) {
@@ -85,10 +89,11 @@ constructor(
                     _item.value = channel
                 }
 
-                val streamUrl = streamUrlDeferred.await()
-                if (streamUrl != null) {
-                    Timber.d("PlayerWrapperViewModel: Got stream URL: $streamUrl")
-                    _liveStreamUrl.value = streamUrl
+                val playbackInfo = playbackInfoDeferred.await()
+                if (playbackInfo != null) {
+                    Timber.d("PlayerWrapperViewModel: Got stream URL: ${playbackInfo.streamUrl}")
+                    _livePlaybackInfo.value = playbackInfo
+                    _liveStreamUrl.value = playbackInfo.streamUrl
                 } else {
                     Timber.e("PlayerWrapperViewModel: Failed to get stream URL")
                     _streamError.value = context.getString(R.string.error_get_stream_url)
@@ -138,19 +143,26 @@ constructor(
                     Timber.e("PlayerWrapperViewModel: Could not determine userId")
                 }
 
-                if (loadedItem == null) {
-                    Timber.d("PlayerWrapperViewModel: Trying to load from API")
+                if (loadedItem == null || loadedItem.sources.isEmpty()) {
+                    if (loadedItem != null) {
+                        Timber.d(
+                            "PlayerWrapperViewModel: DB item has no sources, refetching from API"
+                        )
+                    } else {
+                        Timber.d("PlayerWrapperViewModel: Trying to load from API")
+                    }
                     try {
-                        loadedItem = jellyfinRepository.getItemById(itemId)
-                        if (loadedItem != null) {
+                        val apiItem = mediaRepository.getItemById(itemId)
+                        if (apiItem != null) {
                             Timber.d(
-                                "PlayerWrapperViewModel: Loaded item from API: ${loadedItem.name}"
+                                "PlayerWrapperViewModel: Loaded item from API: ${apiItem.name}"
                             )
+                            loadedItem = apiItem
                         } else {
                             Timber.w("PlayerWrapperViewModel: Item not found via API")
                         }
                     } catch (e: Exception) {
-                        Timber.w(e, "PlayerWrapperViewModel: API load failed (likely offline)")
+                        Timber.w(e, "PlayerWrapperViewModel: API load failed (Check offline mode)")
                     }
                 }
 

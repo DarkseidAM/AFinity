@@ -15,9 +15,6 @@ import com.makd.afinity.data.repository.download.JellyfinDownloadRepository
 import com.makd.afinity.di.DownloadClient
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import java.io.File
-import java.io.FileOutputStream
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -28,6 +25,9 @@ import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.ItemFields
 import org.jellyfin.sdk.model.api.MediaStreamType
 import timber.log.Timber
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
 
 @HiltWorker
 class SubtitleDownloadWorker
@@ -38,7 +38,7 @@ constructor(
     private val sessionManager: SessionManager,
     private val databaseRepository: DatabaseRepository,
     private val downloadRepository: JellyfinDownloadRepository,
-    @DownloadClient private val okHttpClient: OkHttpClient,
+    @param:DownloadClient private val okHttpClient: OkHttpClient,
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -71,11 +71,18 @@ constructor(
                 inputData.getString(KEY_SOURCE_ID)
                     ?: return@withContext Result.failure(workDataOf("error" to "Missing source ID"))
 
+            val downloadId =
+                try {
+                    UUID.fromString(downloadIdString)
+                } catch (e: IllegalArgumentException) {
+                    return@withContext Result.failure(workDataOf("error" to "Invalid download ID"))
+                }
+
             try {
                 Timber.d("Starting subtitle download for item: $itemId")
 
                 val download: DownloadDto =
-                    databaseRepository.getDownloadByItemId(itemId)
+                    databaseRepository.getDownload(downloadId)
                         ?: return@withContext Result.failure(
                             workDataOf("error" to "Download not found")
                         )
@@ -143,8 +150,15 @@ constructor(
                     return@withContext Result.success()
                 }
 
-                val itemDir = downloadRepository.getItemDownloadDirectory(itemId)
-                val subtitlesDir = File(itemDir, "subtitles").also { it.mkdirs() }
+                val itemDir = downloadRepository.getItemDownloadDirectory(download)
+                val subtitlesDir = File(itemDir, "subtitles")
+
+                if (!subtitlesDir.exists() && !subtitlesDir.mkdirs()) {
+                    Timber.e("Failed to create subtitles directory at ${subtitlesDir.absolutePath}")
+                    return@withContext Result.failure(
+                        workDataOf("error" to "Failed to create subtitles directory")
+                    )
+                }
 
                 subtitleStreams.forEach { stream ->
                     try {
@@ -203,12 +217,15 @@ constructor(
 
         if (!outputFile.exists()) {
             val subtitleUrl =
-                "$baseUrl/Videos/$itemId/$mediaSourceId/Subtitles/${stream.index}/Stream.$extension?api_key=${apiClient.accessToken}"
+                "$baseUrl/Videos/$itemId/$mediaSourceId/Subtitles/${stream.index}/Stream.$extension"
 
             val request =
                 Request.Builder()
                     .url(subtitleUrl)
-                    .header("Authorization", "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"")
+                    .header(
+                        "Authorization",
+                        "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"",
+                    )
                     .build()
 
             try {

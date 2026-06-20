@@ -1,17 +1,20 @@
 package com.makd.afinity.data.updater
 
 import com.makd.afinity.data.updater.models.GitHubRelease
-import javax.inject.Inject
-import javax.inject.Singleton
+import com.makd.afinity.di.GitHubClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
 
 @Singleton
-class GitHubApiService @Inject constructor(private val okHttpClient: OkHttpClient) {
+class GitHubApiService
+@Inject
+constructor(@param:GitHubClient private val okHttpClient: OkHttpClient) {
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true

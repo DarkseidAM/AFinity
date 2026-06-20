@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.Base64
@@ -37,7 +36,7 @@ private val Context.dataStore: DataStore<Preferences> by
 @Singleton
 class SecurePreferencesRepositoryImpl
 @Inject
-constructor(@ApplicationContext private val context: Context) : SecurePreferencesRepository {
+constructor(@param:ApplicationContext private val context: Context) : SecurePreferencesRepository {
 
     private companion object {
         private const val MASTER_KEY_URI = "android-keystore://_androidx_security_master_key_"
@@ -57,6 +56,10 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
         val KEY_JELLYSEERR_SERVER_URL = stringPreferencesKey("jellyseerr_server_url")
         val KEY_JELLYSEERR_COOKIE = stringPreferencesKey("jellyseerr_cookie")
         val KEY_JELLYSEERR_USERNAME = stringPreferencesKey("jellyseerr_username")
+
+        val KEY_ACTIVE_SERVER_ID = stringPreferencesKey("active_server_id")
+        val KEY_ACTIVE_USER_ID = stringPreferencesKey("active_user_id")
+        val KEY_ACTIVE_SERVER_URL = stringPreferencesKey("active_server_url")
     }
 
     private val aead: Aead by lazy {
@@ -71,12 +74,7 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
                 .keysetHandle
                 .getPrimitive(RegistryConfiguration.get(), Aead::class.java)
         } catch (e: Exception) {
-            Timber.e(e, "CRITICAL: Tink Init failed. Clearing broken keys.")
-            context
-                .getSharedPreferences(PREF_FILE_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .clear()
-                .apply()
+            Timber.e(e, "CRITICAL: Tink Init failed. Keyset preserved for diagnostics.")
             throw RuntimeException("Crypto Init Failed", e)
         }
     }
@@ -112,22 +110,27 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
     @Volatile private var activeAbsServerId: String? = null
     @Volatile private var activeAbsUserId: UUID? = null
 
+    @Volatile private var cachedJellyfinToken: String? = null
+    @Volatile private var cachedJellyfinServerUrl: String? = null
+
     private val persistScope = kotlinx.coroutines.CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _authenticationState = MutableStateFlow(false)
 
     init {
-        runBlocking(Dispatchers.IO) { _authenticationState.value = hasValidAuthData() }
+        persistScope.launch {
+            val token = getAccessToken()
+            val url = getSavedServerUrl()
+            _authenticationState.value = !token.isNullOrBlank() && !url.isNullOrBlank()
+            cachedJellyfinToken = token
+            cachedJellyfinServerUrl = url
+            Timber.d("SecurePrefs: cache initialized (hasAuth=${_authenticationState.value})")
+        }
     }
 
     private fun encrypt(plainText: String): String {
-        return try {
-            val bytes = aead.encrypt(plainText.toByteArray(Charsets.UTF_8), null)
-            Base64.getEncoder().encodeToString(bytes)
-        } catch (e: Exception) {
-            Timber.e(e, "Encryption failed")
-            ""
-        }
+        val bytes = aead.encrypt(plainText.toByteArray(Charsets.UTF_8), null)
+        return Base64.getEncoder().encodeToString(bytes)
     }
 
     override suspend fun saveAuthenticationData(
@@ -145,6 +148,8 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
             prefs[KEY_USERNAME] = encrypt(username)
             prefs[KEY_IS_AUTHENTICATED] = encrypt("true")
         }
+        cachedJellyfinToken = accessToken
+        cachedJellyfinServerUrl = serverUrl
         _authenticationState.value = true
         Timber.d("Saved authentication data securely")
     }
@@ -168,6 +173,8 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
             prefs.remove(KEY_USERNAME)
             prefs.remove(KEY_IS_AUTHENTICATED)
         }
+        cachedJellyfinToken = null
+        cachedJellyfinServerUrl = null
         _authenticationState.value = false
         Timber.d("Cleared authentication data")
     }
@@ -194,6 +201,8 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
 
     override suspend fun clearAllSecureData() {
         context.dataStore.edit { it.clear() }
+        cachedJellyfinToken = null
+        cachedJellyfinServerUrl = null
         cachedJellyseerrUrl = null
         cachedJellyseerrCookie = null
         cachedJellyseerrUsername = null
@@ -344,6 +353,10 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
     }
 
     override fun getCachedJellyseerrServerUrl(): String? = cachedJellyseerrUrl
+
+    override fun updateCachedJellyseerrServerUrl(url: String) {
+        cachedJellyseerrUrl = url
+    }
 
     override fun getCachedJellyseerrCookie(): String? = cachedJellyseerrCookie
 
@@ -608,6 +621,10 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
 
     override fun getCachedAudiobookshelfServerUrl(): String? = cachedAudiobookshelfUrl
 
+    override fun updateCachedAudiobookshelfServerUrl(url: String) {
+        cachedAudiobookshelfUrl = url
+    }
+
     override fun getCachedAudiobookshelfToken(): String? = cachedAudiobookshelfToken
 
     override fun getCachedAudiobookshelfRefreshToken(): String? = cachedAudiobookshelfRefreshToken
@@ -669,5 +686,37 @@ constructor(@ApplicationContext private val context: Context) : SecurePreference
         return getDecryptedString(mdbKey)
     }
 
+    override suspend fun saveOmdbApiKey(serverId: String, userId: String, apiKey: String) {
+        context.dataStore.edit { prefs ->
+            val omdbKey = stringPreferencesKey("omdb_api_key_${serverId}_$userId")
+            prefs[omdbKey] = encrypt(apiKey)
+        }
+    }
+
+    override suspend fun getOmdbApiKey(serverId: String, userId: String): String? {
+        val omdbKey = stringPreferencesKey("omdb_api_key_${serverId}_$userId")
+        return getDecryptedString(omdbKey)
+    }
+
     @Volatile override var onAbsAuthInvalidated: (() -> Unit)? = null
+
+    override fun getCachedJellyfinToken(): String? = cachedJellyfinToken
+
+    override fun getCachedJellyfinServerUrl(): String? = cachedJellyfinServerUrl
+
+    override suspend fun saveActiveSession(serverId: String, userId: UUID, serverUrl: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_ACTIVE_SERVER_ID] = encrypt(serverId)
+            prefs[KEY_ACTIVE_USER_ID] = encrypt(userId.toString())
+            prefs[KEY_ACTIVE_SERVER_URL] = encrypt(serverUrl)
+        }
+    }
+
+    override suspend fun clearActiveSession() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(KEY_ACTIVE_SERVER_ID)
+            prefs.remove(KEY_ACTIVE_USER_ID)
+            prefs.remove(KEY_ACTIVE_SERVER_URL)
+        }
+    }
 }

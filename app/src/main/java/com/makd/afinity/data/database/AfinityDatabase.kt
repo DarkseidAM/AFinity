@@ -1,15 +1,16 @@
 package com.makd.afinity.data.database
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.makd.afinity.data.database.dao.AbsDownloadDao
+import com.makd.afinity.data.database.dao.AudibleRatingDao
 import com.makd.afinity.data.database.dao.AudiobookshelfDao
 import com.makd.afinity.data.database.dao.BoxSetCacheDao
 import com.makd.afinity.data.database.dao.EpisodeDao
 import com.makd.afinity.data.database.dao.GenreCacheDao
 import com.makd.afinity.data.database.dao.ItemMetadataCacheDao
+import com.makd.afinity.data.database.dao.JellyfinStatsDao
 import com.makd.afinity.data.database.dao.JellyseerrDao
 import com.makd.afinity.data.database.dao.LibraryCacheDao
 import com.makd.afinity.data.database.dao.MediaStreamDao
@@ -26,6 +27,7 @@ import com.makd.afinity.data.database.dao.StudioCacheDao
 import com.makd.afinity.data.database.dao.TopPeopleDao
 import com.makd.afinity.data.database.dao.UserDao
 import com.makd.afinity.data.database.dao.UserDataDao
+import com.makd.afinity.data.database.entities.AbsDownloadEntity
 import com.makd.afinity.data.database.entities.AfinityEpisodeDto
 import com.makd.afinity.data.database.entities.AfinityMediaStreamDto
 import com.makd.afinity.data.database.entities.AfinityMovieDto
@@ -34,6 +36,8 @@ import com.makd.afinity.data.database.entities.AfinitySegmentDto
 import com.makd.afinity.data.database.entities.AfinityShowDto
 import com.makd.afinity.data.database.entities.AfinitySourceDto
 import com.makd.afinity.data.database.entities.AfinityTrickplayInfoDto
+import com.makd.afinity.data.database.entities.AudibleRatingEntity
+import com.makd.afinity.data.database.entities.AudiobookshelfAddressEntity
 import com.makd.afinity.data.database.entities.AudiobookshelfConfigEntity
 import com.makd.afinity.data.database.entities.AudiobookshelfItemEntity
 import com.makd.afinity.data.database.entities.AudiobookshelfLibraryEntity
@@ -45,6 +49,8 @@ import com.makd.afinity.data.database.entities.GenreCacheEntity
 import com.makd.afinity.data.database.entities.GenreMovieCacheEntity
 import com.makd.afinity.data.database.entities.GenreShowCacheEntity
 import com.makd.afinity.data.database.entities.ItemMetadataCacheEntity
+import com.makd.afinity.data.database.entities.JellyfinStatsCacheEntity
+import com.makd.afinity.data.database.entities.JellyseerrAddressEntity
 import com.makd.afinity.data.database.entities.JellyseerrConfigEntity
 import com.makd.afinity.data.database.entities.JellyseerrRequestEntity
 import com.makd.afinity.data.database.entities.LibraryCacheEntity
@@ -92,8 +98,13 @@ import com.makd.afinity.data.models.user.User
             AudiobookshelfItemEntity::class,
             AudiobookshelfProgressEntity::class,
             ItemMetadataCacheEntity::class,
+            JellyseerrAddressEntity::class,
+            AudiobookshelfAddressEntity::class,
+            JellyfinStatsCacheEntity::class,
+            AbsDownloadEntity::class,
+            AudibleRatingEntity::class,
         ],
-    version = 34,
+    version = 49,
     exportSchema = false,
 )
 @TypeConverters(AfinityTypeConverters::class)
@@ -141,51 +152,9 @@ abstract class AfinityDatabase : RoomDatabase() {
 
     abstract fun itemMetadataCacheDao(): ItemMetadataCacheDao
 
-    companion object {
-        @Volatile private var INSTANCE: AfinityDatabase? = null
+    abstract fun jellyfinStatsDao(): JellyfinStatsDao
 
-        fun getDatabase(context: Context): AfinityDatabase {
-            return INSTANCE
-                ?: synchronized(this) {
-                    val instance =
-                        Room.databaseBuilder(
-                                context.applicationContext,
-                                AfinityDatabase::class.java,
-                                "afinity_database",
-                            )
-                            .addMigrations(*DatabaseMigrations.ALL_MIGRATIONS)
-                            .build()
-                    INSTANCE = instance
-                    instance
-                }
-        }
+    abstract fun absDownloadDao(): AbsDownloadDao
 
-        fun getProductionDatabase(context: Context): AfinityDatabase {
-            return INSTANCE
-                ?: synchronized(this) {
-                    val instance =
-                        Room.databaseBuilder(
-                                context.applicationContext,
-                                AfinityDatabase::class.java,
-                                "afinity_database",
-                            )
-                            .addMigrations(*DatabaseMigrations.ALL_MIGRATIONS)
-                            .build()
-                    INSTANCE = instance
-                    instance
-                }
-        }
-
-        fun createInMemoryDatabase(context: Context): AfinityDatabase {
-            return Room.inMemoryDatabaseBuilder(
-                    context.applicationContext,
-                    AfinityDatabase::class.java,
-                )
-                .build()
-        }
-
-        fun clearInstance() {
-            INSTANCE = null
-        }
-    }
+    abstract fun audibleRatingDao(): AudibleRatingDao
 }

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,10 +56,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.makd.afinity.R
 import com.makd.afinity.data.models.common.EpisodeLayout
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.settings.SettingsViewModel
+import com.makd.afinity.ui.theme.AppFont
 import com.makd.afinity.ui.theme.ThemeMode
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,10 +76,15 @@ fun AppearanceOptionsScreen(
     val combineLibrarySections by viewModel.combineLibrarySections.collectAsState()
     val homeSortByDateAdded by viewModel.homeSortByDateAdded.collectAsState()
     val episodeLayout by viewModel.episodeLayout.collectAsState()
+    val showRatings by viewModel.showRatings.collectAsState()
     val tmdbApiKey by viewModel.tmdbApiKey.collectAsState()
     val mdbListApiKey by viewModel.mdbListApiKey.collectAsState()
+    val omdbApiKey by viewModel.omdbApiKey.collectAsState()
+    val appFont by viewModel.appFont.collectAsState()
     var showTmdbDialog by remember { mutableStateOf(false) }
     var showMdbListDialog by remember { mutableStateOf(false) }
+    var showOmdbDialog by remember { mutableStateOf(false) }
+    val playerOffset = LocalPlayerOffset.current
 
     Scaffold(
         topBar = {
@@ -103,9 +115,23 @@ fun AppearanceOptionsScreen(
         containerColor = MaterialTheme.colorScheme.surface,
         modifier = modifier.fillMaxSize(),
     ) { innerPadding ->
+        val layoutDirection = LocalLayoutDirection.current
+        val customPadding =
+            PaddingValues(
+                top = innerPadding.calculateTopPadding(),
+                start = innerPadding.calculateStartPadding(layoutDirection),
+                end = innerPadding.calculateEndPadding(layoutDirection),
+                bottom = max(innerPadding.calculateBottomPadding(), playerOffset),
+            )
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-            contentPadding = PaddingValues(vertical = 16.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding =
+                PaddingValues(
+                    top = customPadding.calculateTopPadding() + 16.dp,
+                    start = customPadding.calculateStartPadding(layoutDirection),
+                    end = customPadding.calculateEndPadding(layoutDirection),
+                    bottom = customPadding.calculateBottomPadding() + 16.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             item {
@@ -114,6 +140,8 @@ fun AppearanceOptionsScreen(
                         currentThemeMode = uiState.themeMode,
                         onThemeModeChange = viewModel::setThemeMode,
                     )
+                    SettingsDivider()
+                    FontSelectorItem(currentFont = appFont, onFontChange = viewModel::setAppFont)
                     SettingsDivider()
                     SettingsSwitchItem(
                         icon = painterResource(id = R.drawable.ic_colorize),
@@ -151,15 +179,26 @@ fun AppearanceOptionsScreen(
                         selectedLayout = episodeLayout,
                         onLayoutSelected = viewModel::setEpisodeLayout,
                     )
+                    SettingsDivider()
+                    SettingsSwitchItem(
+                        icon = painterResource(id = R.drawable.ic_visibility),
+                        title = stringResource(R.string.pref_show_ratings_title),
+                        subtitle = stringResource(R.string.pref_show_ratings_summary),
+                        checked = showRatings,
+                        onCheckedChange = viewModel::toggleShowRatings,
+                    )
                 }
             }
 
             item {
-                SettingsGroup(title = "Integrations") {
+                SettingsGroup(title = stringResource(R.string.pref_group_integrations)) {
                     SettingsItem(
                         icon = painterResource(id = R.drawable.ic_tmdb_short),
-                        title = "TMDB API Key",
-                        subtitle = if (tmdbApiKey.isNotBlank()) "Configured" else "Not configured",
+                        title = stringResource(R.string.pref_tmdb_api_key_title),
+                        subtitle =
+                            if (tmdbApiKey.isNotBlank())
+                                stringResource(R.string.pref_api_key_configured)
+                            else stringResource(R.string.pref_api_key_not_configured),
                         onClick = { showTmdbDialog = true },
                     )
 
@@ -167,10 +206,24 @@ fun AppearanceOptionsScreen(
 
                     SettingsItem(
                         icon = painterResource(id = R.drawable.ic_mdblist),
-                        title = "MDBList API Key",
+                        title = stringResource(R.string.pref_mdblist_api_key_title),
                         subtitle =
-                            if (mdbListApiKey.isNotBlank()) "Configured" else "Not configured",
+                            if (mdbListApiKey.isNotBlank())
+                                stringResource(R.string.pref_api_key_configured)
+                            else stringResource(R.string.pref_api_key_not_configured),
                         onClick = { showMdbListDialog = true },
+                    )
+
+                    SettingsDivider()
+
+                    SettingsItem(
+                        icon = painterResource(id = R.drawable.ic_omdb_logo),
+                        title = stringResource(R.string.pref_omdb_api_key_title),
+                        subtitle =
+                            if (omdbApiKey.isNotBlank())
+                                stringResource(R.string.pref_api_key_configured)
+                            else stringResource(R.string.pref_api_key_not_configured),
+                        onClick = { showOmdbDialog = true },
                     )
                 }
             }
@@ -179,24 +232,54 @@ fun AppearanceOptionsScreen(
 
     if (showTmdbDialog) {
         ApiKeyDialog(
-            title = "TMDB Configuration",
+            title = stringResource(R.string.pref_tmdb_config_title),
             initialKey = tmdbApiKey,
-            onDismiss = { showTmdbDialog = false },
-            onSave = { newKey ->
-                viewModel.setTmdbApiKey(newKey)
+            isValidationLoading = uiState.isTmdbKeyValidating,
+            validationError = uiState.tmdbKeyValidationError,
+            onDismiss = {
                 showTmdbDialog = false
+                viewModel.clearApiValidationErrors()
+            },
+            onSave = { newKey ->
+                viewModel.validateAndSaveTmdbKey(newKey) {
+                    showTmdbDialog = false
+                }
             },
         )
     }
 
     if (showMdbListDialog) {
         ApiKeyDialog(
-            title = "MDBList Configuration",
+            title = stringResource(R.string.pref_mdblist_config_title),
             initialKey = mdbListApiKey,
-            onDismiss = { showMdbListDialog = false },
-            onSave = { newKey ->
-                viewModel.setMdbListApiKey(newKey)
+            isValidationLoading = uiState.isMdbListKeyValidating,
+            validationError = uiState.mdbListKeyValidationError,
+            onDismiss = {
                 showMdbListDialog = false
+                viewModel.clearApiValidationErrors()
+            },
+            onSave = { newKey ->
+                viewModel.validateAndSaveMdbListKey(newKey) {
+                    showMdbListDialog = false
+                }
+            },
+        )
+    }
+
+    if (showOmdbDialog) {
+        ApiKeyDialog(
+            title = stringResource(R.string.pref_omdb_config_title),
+            initialKey = omdbApiKey,
+            isValidationLoading = uiState.isOmdbKeyValidating,
+            validationError = uiState.omdbKeyValidationError,
+            onDismiss = {
+                showOmdbDialog = false
+                viewModel.clearApiValidationErrors()
+            },
+            onSave = { newKey ->
+                viewModel.validateAndSaveOmdbKey(newKey) {
+                    showOmdbDialog = false
+                }
             },
         )
     }
@@ -204,8 +287,8 @@ fun AppearanceOptionsScreen(
 
 @Composable
 private fun SettingsGroup(
-    title: String? = null,
     modifier: Modifier = Modifier,
+    title: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -466,9 +549,12 @@ private fun ApiKeyDialog(
     title: String,
     initialKey: String,
     onDismiss: () -> Unit,
+    isValidationLoading: Boolean = false,
+    validationError: String? = null,
     onSave: (String) -> Unit,
 ) {
     var input by remember { mutableStateOf(initialKey) }
+    var localError by remember(validationError) { mutableStateOf(validationError) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -490,12 +576,39 @@ private fun ApiKeyDialog(
                 )
                 OutlinedTextField(
                     value = input,
-                    onValueChange = { input = it },
+                    onValueChange = {
+                        input = it
+                        localError = null
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     shape = RoundedCornerShape(12.dp),
+                    isError = localError != null,
+                    trailingIcon = {
+                        if (localError != null) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_exclamation_circle),
+                                contentDescription = "Invalid Key",
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        } else if (isValidationLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    },
+                    supportingText = {
+                        if (localError != null) {
+                            Text(
+                                text = localError!!,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    },
                     colors =
                         OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -505,8 +618,11 @@ private fun ApiKeyDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(input.trim()) }) {
-                Text("Save", fontWeight = FontWeight.Bold)
+            TextButton(
+                onClick = { onSave(input.trim()) },
+                enabled = !isValidationLoading,
+            ) {
+                Text(stringResource(R.string.action_save), fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -514,18 +630,94 @@ private fun ApiKeyDialog(
                 if (initialKey.isNotBlank()) {
                     TextButton(
                         onClick = { onSave("") },
+                        enabled = !isValidationLoading,
                         colors =
                             androidx.compose.material3.ButtonDefaults.textButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error
                             ),
                     ) {
-                        Text("Clear Key")
+                        Text(stringResource(R.string.action_clear_key))
                     }
                 }
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !isValidationLoading,
+                ) {
+                    Text(
+                        stringResource(R.string.action_cancel),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
     )
+}
+
+@Composable
+private fun FontSelectorItem(currentFont: String, onFontChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentAppFont = AppFont.fromString(currentFont)
+
+    Box {
+        SettingsItem(
+            icon = painterResource(id = R.drawable.ic_font),
+            title = "App Font",
+            subtitle = getFontDisplayName(currentAppFont),
+            onClick = { expanded = true },
+            trailing = {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_keyboard_arrow_down),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
+                )
+            },
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            AppFont.entries.forEach { font ->
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = getFontDisplayName(font),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            if (font.name == currentFont) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_check),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        onFontChange(font.name)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun getFontDisplayName(font: AppFont): String {
+    return when (font) {
+        AppFont.DEFAULT -> "System Default"
+        AppFont.GOOGLE_SANS -> "Google Sans Flex"
+        AppFont.QUICKSAND -> "Quicksand"
+        AppFont.IBM_PLEX_SANS -> "IBM Plex Sans"
+        AppFont.IBM_PLEX_SANS_CONDENSED -> "IBM Plex Sans Condensed"
+    }
 }

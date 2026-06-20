@@ -4,9 +4,6 @@ import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.user.AfinityUserDataDto
 import com.makd.afinity.data.repository.DatabaseRepository
 import com.makd.afinity.data.repository.PreferencesRepository
-import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jellyfin.sdk.api.client.exception.ApiClientException
@@ -23,6 +20,9 @@ import org.jellyfin.sdk.model.api.RepeatMode
 import org.jellyfin.sdk.model.api.SubtitleDeliveryMethod
 import org.jellyfin.sdk.model.api.SubtitleProfile
 import timber.log.Timber
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
 
 @Singleton
 class JellyfinPlaybackRepository
@@ -159,35 +159,29 @@ constructor(
         videoStreamIndex: Int?,
         maxStreamingBitrate: Int?,
         startTimeTicks: Long?,
+        playSessionId: String?,
+        tag: String?,
     ): String? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val apiClient = sessionManager.getCurrentApiClient() ?: return@withContext null
-                val videosApi = VideosApi(apiClient)
-
-                val streamUrl =
-                    videosApi.getVideoStreamUrl(
-                        itemId = itemId,
-                        static = true,
-                        mediaSourceId = mediaSourceId,
-                        audioStreamIndex = audioStreamIndex,
-                        subtitleStreamIndex = subtitleStreamIndex,
-                        videoStreamIndex = videoStreamIndex,
-                        startTimeTicks = null,
-                    )
-
-                Timber.d("Generated stream URL: $streamUrl")
-                streamUrl
-            } catch (e: ApiClientException) {
-                Timber.e(
-                    e,
-                    "Failed to get stream URL for item: $itemId, mediaSource: $mediaSourceId",
+        return try {
+            val apiClient = sessionManager.getCurrentApiClient() ?: return null
+            val videosApi = VideosApi(apiClient)
+            val streamUrl =
+                videosApi.getVideoStreamUrl(
+                    itemId = itemId,
+                    static = true,
+                    mediaSourceId = mediaSourceId,
+                    audioStreamIndex = audioStreamIndex,
+                    subtitleStreamIndex = subtitleStreamIndex,
+                    videoStreamIndex = videoStreamIndex,
+                    startTimeTicks = startTimeTicks,
+                    playSessionId = playSessionId,
+                    tag = tag,
                 )
-                null
-            } catch (e: Exception) {
-                Timber.e(e, "Unexpected error getting stream URL for item: $itemId")
-                null
-            }
+            Timber.d("Generated stream URL for item: $itemId")
+            streamUrl
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to build stream URL for item: $itemId")
+            null
         }
     }
 
@@ -198,6 +192,7 @@ constructor(
         audioStreamIndex: Int?,
         subtitleStreamIndex: Int?,
         playMethod: String,
+        liveStreamId: String?,
         canSeek: Boolean,
     ): Boolean {
         return withContext(Dispatchers.IO) {
@@ -210,7 +205,8 @@ constructor(
                     mediaSourceId = mediaSourceId,
                     audioStreamIndex = audioStreamIndex,
                     subtitleStreamIndex = subtitleStreamIndex,
-                    PlayMethod.fromName(playMethod),
+                    playMethod = PlayMethod.fromName(playMethod),
+                    liveStreamId = liveStreamId,
                     playSessionId = sessionId,
                     canSeek = canSeek,
                 )
@@ -235,13 +231,13 @@ constructor(
         audioStreamIndex: Int?,
         subtitleStreamIndex: Int?,
         playMethod: String,
+        liveStreamId: String?,
         repeatMode: String,
     ): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 val apiClient = sessionManager.getCurrentApiClient() ?: return@withContext false
                 val playStateApi = PlayStateApi(apiClient)
-
                 playStateApi.onPlaybackProgress(
                     itemId = itemId,
                     positionTicks = positionTicks,
@@ -249,6 +245,7 @@ constructor(
                     subtitleStreamIndex = subtitleStreamIndex,
                     volumeLevel = volumeLevel,
                     playMethod = PlayMethod.fromName(playMethod),
+                    liveStreamId = liveStreamId,
                     playSessionId = sessionId,
                     repeatMode = RepeatMode.fromName(repeatMode),
                     isPaused = isPaused,
@@ -257,14 +254,24 @@ constructor(
                 true
             } catch (e: ApiClientException) {
                 Timber.e(e, "Failed to report playback progress for item: $itemId, saving locally")
-                savePlaybackProgressLocally(itemId, positionTicks)
+                savePlaybackProgressLocally(
+                    itemId,
+                    positionTicks,
+                    audioStreamIndex,
+                    subtitleStreamIndex,
+                )
                 false
             } catch (e: Exception) {
                 Timber.e(
                     e,
                     "Unexpected error reporting playback progress for item: $itemId, saving locally",
                 )
-                savePlaybackProgressLocally(itemId, positionTicks)
+                savePlaybackProgressLocally(
+                    itemId,
+                    positionTicks,
+                    audioStreamIndex,
+                    subtitleStreamIndex,
+                )
                 false
             }
         }
@@ -275,6 +282,7 @@ constructor(
         sessionId: String,
         positionTicks: Long,
         mediaSourceId: String,
+        liveStreamId: String?,
         nextMediaType: String?,
         playlistItemId: String?,
     ): Boolean {
@@ -288,6 +296,7 @@ constructor(
                     mediaSourceId = mediaSourceId,
                     nextMediaType = nextMediaType,
                     positionTicks = positionTicks,
+                    liveStreamId = liveStreamId,
                     playSessionId = sessionId,
                 )
                 true
@@ -306,25 +315,19 @@ constructor(
         }
     }
 
-    private suspend fun savePlaybackProgressLocally(itemId: UUID, positionTicks: Long) {
+    private suspend fun savePlaybackProgressLocally(
+        itemId: UUID,
+        positionTicks: Long,
+        audioStreamIndex: Int? = null,
+        subtitleStreamIndex: Int? = null,
+    ) {
         try {
-            val userIdString =
-                preferencesRepository.getCurrentUserId()
+            val userId =
+                getCurrentUserId()
                     ?: run {
-                        Timber.w(
-                            "Cannot save playback progress locally: no current user ID in preferences"
-                        )
+                        Timber.w("Cannot save playback progress locally: no active session user ID")
                         return
                     }
-
-            val userId =
-                try {
-                    UUID.fromString(userIdString)
-                } catch (e: IllegalArgumentException) {
-                    Timber.w("Cannot save playback progress locally: invalid user ID format")
-                    return
-                }
-
             val serverId = sessionManager.currentSession.value?.serverId
             if (serverId == null) {
                 Timber.w("Cannot save playback progress locally: no active server session")
@@ -332,7 +335,6 @@ constructor(
             }
 
             val existingData = databaseRepository.getUserData(userId, itemId)
-
             val updatedData =
                 AfinityUserDataDto(
                     userId = userId,
@@ -340,10 +342,12 @@ constructor(
                     serverId = serverId,
                     played = existingData?.played ?: false,
                     favorite = existingData?.favorite ?: false,
+                    likes = existingData?.likes ?: false,
                     playbackPositionTicks = positionTicks,
                     toBeSynced = true,
+                    audioStreamIndex = audioStreamIndex ?: existingData?.audioStreamIndex,
+                    subtitleStreamIndex = subtitleStreamIndex ?: existingData?.subtitleStreamIndex,
                 )
-
             databaseRepository.insertUserData(updatedData)
             Timber.i(
                 "Saved playback progress locally for item $itemId: ${positionTicks / 10000}ms (will sync when online)"

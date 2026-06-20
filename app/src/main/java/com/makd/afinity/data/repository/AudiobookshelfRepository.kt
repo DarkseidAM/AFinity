@@ -1,9 +1,13 @@
 package com.makd.afinity.data.repository
 
+import com.makd.afinity.data.models.audiobookshelf.AudibleRating
 import com.makd.afinity.data.models.audiobookshelf.AudiobookshelfSeries
 import com.makd.afinity.data.models.audiobookshelf.AudiobookshelfUser
 import com.makd.afinity.data.models.audiobookshelf.Library
 import com.makd.afinity.data.models.audiobookshelf.LibraryItem
+import com.makd.afinity.data.models.audiobookshelf.LibraryStats
+import com.makd.afinity.data.models.audiobookshelf.ListeningSessionsResponse
+import com.makd.afinity.data.models.audiobookshelf.ListeningStats
 import com.makd.afinity.data.models.audiobookshelf.MediaProgress
 import com.makd.afinity.data.models.audiobookshelf.PersonalizedView
 import com.makd.afinity.data.models.audiobookshelf.PlaybackSession
@@ -15,6 +19,8 @@ import java.util.UUID
 data class ItemWithProgress(val item: LibraryItem, val progress: MediaProgress?)
 
 interface AudiobookshelfRepository {
+
+    suspend fun verifyServer(url: String): Boolean
 
     suspend fun setActiveJellyfinSession(serverId: String, userId: UUID)
 
@@ -42,11 +48,15 @@ interface AudiobookshelfRepository {
 
     suspend fun hasValidConfiguration(): Boolean
 
+    suspend fun getAllKnownAddresses(): List<String>
+
     fun getLibrariesFlow(): Flow<List<Library>>
 
     suspend fun refreshLibraries(): Result<List<Library>>
 
     suspend fun getLibrary(libraryId: String): Result<Library>
+
+    suspend fun getLibraryStats(libraryId: String): Result<LibraryStats>
 
     fun getLibraryItemsFlow(libraryId: String): Flow<List<LibraryItem>>
 
@@ -71,6 +81,8 @@ interface AudiobookshelfRepository {
         seriesId: String,
         limit: Int = 4,
     ): Result<SeriesItemsResult>
+
+    val personalizedCache: StateFlow<Map<String, List<PersonalizedView>>>
 
     suspend fun getPersonalized(libraryId: String): Result<List<PersonalizedView>>
 
@@ -108,7 +120,9 @@ interface AudiobookshelfRepository {
         duration: Double,
     ): Result<Unit>
 
-    suspend fun syncPendingProgress(): Result<Int>
+    val currentActiveContext: Pair<String, UUID>?
+
+    suspend fun syncPendingProgress(serverId: String, userId: UUID): Result<Int>
 
     suspend fun getGenres(libraryIds: List<String>): Result<List<String>>
 
@@ -119,6 +133,17 @@ interface AudiobookshelfRepository {
         genre: String,
         limit: Int,
     ): Result<List<LibraryItem>>
+
+    suspend fun getListeningStats(): Result<ListeningStats>
+
+    suspend fun getListeningSessions(itemsPerPage: Int = 15): Result<ListeningSessionsResponse>
+
+    suspend fun getAudibleRating(
+        itemId: String,
+        asin: String?,
+        title: String,
+        authorName: String?,
+    ): Result<AudibleRating?>
 }
 
 data class AudiobookshelfConfig(val serverUrl: String, val absUserId: String, val username: String)

@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,7 +38,10 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makd.afinity.R
 import com.makd.afinity.data.models.audiobookshelf.LibraryItem
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.audiobookshelf.libraries.components.AudiobookCard
+import com.makd.afinity.ui.components.FullScreenError
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.theme.CardDimensions.gridMinSize
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,28 +79,14 @@ fun AudiobookshelfGenreResultsScreen(
 
         when {
             uiState.isLoading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                FullScreenLoading()
             }
 
             uiState.error != null -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.error_something_went_wrong),
-                            style = MaterialTheme.typography.headlineSmall,
-                        )
-                        Text(
-                            text = uiState.error ?: stringResource(R.string.error_unknown),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                FullScreenError(
+                    title = stringResource(R.string.error_something_went_wrong),
+                    message = uiState.error ?: stringResource(R.string.error_unknown),
+                )
             }
 
             else -> {
@@ -247,10 +235,11 @@ private fun AudiobookshelfItemGrid(
     onItemClick: (String) -> Unit,
     widthSizeClass: WindowWidthSizeClass,
 ) {
+    val playerOffset = LocalPlayerOffset.current
     LazyVerticalGrid(
         columns = GridCells.Adaptive(widthSizeClass.gridMinSize),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp + playerOffset),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

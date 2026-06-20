@@ -3,21 +3,33 @@ package com.makd.afinity.di
 import android.content.Context
 import com.makd.afinity.BuildConfig
 import com.makd.afinity.core.AppConstants
+import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.network.AudiobookshelfApiService
+import com.makd.afinity.data.network.AudnexusApiService
 import com.makd.afinity.data.network.JellyseerrApiService
 import com.makd.afinity.data.network.MdbListApiService
+import com.makd.afinity.data.network.OmdbApiService
 import com.makd.afinity.data.network.TmdbApiService
 import com.makd.afinity.data.repository.SecurePreferencesRepository
+import com.makd.afinity.util.NetworkConnectivityMonitor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Cache
 import okhttp3.ConnectionPool
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -39,6 +51,8 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
+import java.net.Inet4Address
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import javax.inject.Qualifier
@@ -48,6 +62,8 @@ import javax.inject.Singleton
 
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class ImageClient
 
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class GitHubClient
+
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class JellyseerrClient
 
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class AudiobookshelfRetrofit
@@ -56,9 +72,69 @@ import javax.inject.Singleton
 
 @Qualifier @Retention(AnnotationRetention.BINARY) annotation class MdbListClient
 
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class OmdbClient
+
+@Qualifier @Retention(AnnotationRetention.BINARY) annotation class AudnexusClient
+
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+    private class SeerrCookieJar(private val securePrefs: SecurePreferencesRepository) : CookieJar {
+        private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
+
+        private fun getSessionKey(host: String): String {
+            val activeSession = securePrefs.getCachedJellyseerrCookie() ?: "anonymous"
+            return "${host}_${activeSession.hashCode()}"
+        }
+
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            val key = getSessionKey(url.host)
+            val bucket = store.getOrPut(key) { mutableListOf() }
+            synchronized(bucket) {
+                for (c in cookies) {
+                    bucket.removeIf { it.name == c.name }
+                    if (c.value.isNotEmpty()) bucket.add(c)
+                }
+            }
+        }
+
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            val key = getSessionKey(url.host)
+            val bucket = store[key] ?: return emptyList()
+            synchronized(bucket) {
+                return bucket.filter { !it.secure || url.scheme == "https" }
+            }
+        }
+
+        fun preloadSessionCookie(url: HttpUrl, rawSetCookie: String?) {
+            rawSetCookie ?: return
+            Cookie.parse(url, rawSetCookie)?.let { saveFromResponse(url, listOf(it)) }
+        }
+
+        fun hasXsrfToken(host: String): Boolean {
+            val key = getSessionKey(host)
+            val bucket = store[key] ?: return false
+            synchronized(bucket) {
+                return bucket.any { it.name == "XSRF-TOKEN" }
+            }
+        }
+
+        fun getXsrfToken(host: String): String? {
+            val key = getSessionKey(host)
+            val bucket = store[key] ?: return null
+            synchronized(bucket) {
+                return bucket.find { it.name == "XSRF-TOKEN" }?.value
+            }
+        }
+
+        fun clear(host: String? = null) {
+            if (host != null) {
+                store.remove(getSessionKey(host))
+            } else {
+                store.clear()
+            }
+        }
+    }
 
     @Provides
     @Singleton
@@ -71,7 +147,10 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideBaseOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
+    fun provideBaseOkHttpClient(
+        @ApplicationContext context: Context,
+        networkMonitor: NetworkConnectivityMonitor,
+    ): OkHttpClient {
         val dispatcher =
             Dispatcher(
                     Executors.newCachedThreadPool { runnable ->
@@ -90,6 +169,12 @@ object NetworkModule {
                 timeUnit = TimeUnit.SECONDS,
             )
 
+        CoroutineScope(Dispatchers.Default).launch {
+            merge(networkMonitor.networkSwitchEvents, networkMonitor.networkDropEvents).collect {
+                connectionPool.evictAll()
+            }
+        }
+
         val builder =
             OkHttpClient.Builder()
                 .dispatcher(dispatcher)
@@ -100,6 +185,9 @@ object NetworkModule {
                         maxSize = 50L * 1024L * 1024L,
                     )
                 )
+                .dns { hostname ->
+                    Dns.SYSTEM.lookup(hostname).sortedBy { if (it is Inet4Address) 0 else 1 }
+                }
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
@@ -118,9 +206,10 @@ object NetworkModule {
                             )
                         if (
                             sanitizedMessage.contains("ERROR") ||
-                                sanitizedMessage.contains("FAILED") ||
-                                sanitizedMessage.contains("-->") ||
-                                sanitizedMessage.contains("<--")
+                                sanitizedMessage.contains("FAILED")
+                        //                            ||
+                        //                                sanitizedMessage.contains("-->") ||
+                        //                                sanitizedMessage.contains("<--")
                         ) {
                             Timber.tag("Jellyfin-HTTP").d(sanitizedMessage)
                         }
@@ -141,19 +230,56 @@ object NetworkModule {
     @Provides
     @Singleton
     @ImageClient
-    fun provideImageOkHttpClient(baseOkHttpClient: OkHttpClient): OkHttpClient {
+    fun provideImageOkHttpClient(
+        baseOkHttpClient: OkHttpClient,
+        sessionManager: SessionManager,
+    ): OkHttpClient {
         val dispatcher =
             Dispatcher().apply {
                 maxRequests = 64
                 maxRequestsPerHost = 16
             }
-        return baseOkHttpClient.newBuilder().dispatcher(dispatcher).build()
+        return baseOkHttpClient
+            .newBuilder()
+            .dispatcher(dispatcher)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val session = sessionManager.currentSession.value
+                val token = session?.user?.accessToken
+                val serverUrl = session?.serverUrl
+                if (token != null && serverUrl != null) {
+                    val serverHost = serverUrl.toHttpUrlOrNull()?.host
+                    if (serverHost != null && request.url.host == serverHost) {
+                        return@addInterceptor chain.proceed(
+                            request
+                                .newBuilder()
+                                .addHeader("Authorization", "MediaBrowser Token=$token")
+                                .build()
+                        )
+                    }
+                }
+                chain.proceed(request)
+            }
+            .build()
     }
 
     @Provides
     @Singleton
+    @GitHubClient
+    fun provideGitHubOkHttpClient(): OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .build()
+
+    @Provides
+    @Singleton
     @DownloadClient
-    fun provideDownloadOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
+    fun provideDownloadOkHttpClient(
+        @ApplicationContext context: Context,
+        networkMonitor: NetworkConnectivityMonitor,
+    ): OkHttpClient {
         val dispatcher =
             Dispatcher(
                     Executors.newCachedThreadPool { runnable ->
@@ -171,6 +297,12 @@ object NetworkModule {
                 keepAliveDuration = 5,
                 timeUnit = TimeUnit.MINUTES,
             )
+
+        CoroutineScope(Dispatchers.Default).launch {
+            merge(networkMonitor.networkSwitchEvents, networkMonitor.networkDropEvents).collect {
+                connectionPool.evictAll()
+            }
+        }
 
         val builder =
             OkHttpClient.Builder()
@@ -268,19 +400,26 @@ object NetworkModule {
         baseOkHttpClient: OkHttpClient,
         securePreferencesRepository: SecurePreferencesRepository,
     ): OkHttpClient {
+        val seerrCookieJar = SeerrCookieJar(securePreferencesRepository)
+        val csrfSeedClient =
+            baseOkHttpClient
+                .newBuilder()
+                .cookieJar(seerrCookieJar)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .callTimeout(15, TimeUnit.SECONDS)
+                .build()
+
         return baseOkHttpClient
             .newBuilder()
+            .cookieJar(seerrCookieJar)
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
 
                 val savedUrl = securePreferencesRepository.getCachedJellyseerrServerUrl()
                 val currentBaseUrl =
                     try {
-                        if (!savedUrl.isNullOrBlank()) {
-                            normalizeJellyseerrUrl(savedUrl)
-                        } else {
-                            null
-                        }
+                        if (!savedUrl.isNullOrBlank()) normalizeJellyseerrUrl(savedUrl) else null
                     } catch (e: Exception) {
                         null
                     }
@@ -291,12 +430,20 @@ object NetworkModule {
                     )
                 }
 
+                val baseHttpUrl =
+                    currentBaseUrl.toHttpUrlOrNull()
+                        ?: throw IOException("Failed to parse Jellyseerr URL")
+
+                seerrCookieJar.preloadSessionCookie(
+                    baseHttpUrl,
+                    securePreferencesRepository.getCachedJellyseerrCookie(),
+                )
+
                 val newUrl =
-                    currentBaseUrl
-                        .toHttpUrlOrNull()
-                        ?.newBuilder()
-                        ?.addPathSegments(originalRequest.url.encodedPath.removePrefix("/"))
-                        ?.apply {
+                    baseHttpUrl
+                        .newBuilder()
+                        .addPathSegments(originalRequest.url.encodedPath.removePrefix("/"))
+                        .apply {
                             for (i in 0 until originalRequest.url.querySize) {
                                 addQueryParameter(
                                     originalRequest.url.queryParameterName(i),
@@ -304,30 +451,59 @@ object NetworkModule {
                                 )
                             }
                         }
-                        ?.build() ?: throw IOException("Failed to build Jellyseerr URL")
+                        .build()
+
+                val isMutating = originalRequest.method in listOf("POST", "PUT", "DELETE", "PATCH")
+
+                if (isMutating && !seerrCookieJar.hasXsrfToken(baseHttpUrl.host)) {
+                    val candidates = listOf(currentBaseUrl)
+                    for (url in candidates) {
+                        try {
+                            csrfSeedClient
+                                .newCall(Request.Builder().url(url).get().build())
+                                .execute()
+                                .close()
+                            if (seerrCookieJar.hasXsrfToken(baseHttpUrl.host)) {
+                                if (url != currentBaseUrl)
+                                    securePreferencesRepository.updateCachedJellyseerrServerUrl(
+                                        url.trimEnd('/')
+                                    )
+                                break
+                            }
+                        } catch (e: Exception) {
+                            Timber.w(e, "Jellyseerr: CSRF seed failed for $url")
+                        }
+                    }
+                }
 
                 val newRequest =
                     originalRequest
                         .newBuilder()
                         .url(newUrl)
                         .apply {
-                            val cookie = securePreferencesRepository.getCachedJellyseerrCookie()
-                            cookie?.let { addHeader("Cookie", it) }
                             addHeader("Content-Type", "application/json")
+                            seerrCookieJar.getXsrfToken(baseHttpUrl.host)?.let {
+                                addHeader("XSRF-TOKEN", it)
+                            }
                         }
                         .build()
 
-                chain.proceed(newRequest)
+                val response = chain.proceed(newRequest)
+
+                if (response.code == 403) {
+                    seerrCookieJar.clear(baseHttpUrl.host)
+                }
+
+                response
             }
             .build()
     }
 
-    private val jellyseerrJson =
-        kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true
-            isLenient = true
-            encodeDefaults = true
-        }
+    private val jellyseerrJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        encodeDefaults = true
+    }
 
     @Provides
     @Singleton
@@ -417,12 +593,7 @@ object NetworkModule {
                 val response = chain.proceed(newRequest)
 
                 if (newUrl.encodedPath.contains("/play")) {
-                    val responseBody = response.body
-                    val source = responseBody.source()
-                    source.request(Long.MAX_VALUE)
-                    val buffer = source.buffer.clone()
-                    val responseString = buffer.readUtf8()
-                    Timber.d("ABS Play Response [${response.code}]: $responseString")
+                    Timber.d("ABS Play Response [${response.code}]")
                 }
 
                 if (response.code == 401 && !newUrl.encodedPath.contains("auth")) {
@@ -446,7 +617,12 @@ object NetworkModule {
                         val refreshToken =
                             securePreferencesRepository.getCachedAudiobookshelfRefreshToken()
                         if (refreshToken != null) {
-                            val refreshResult = attemptAbsTokenRefresh(currentBaseUrl, refreshToken)
+                            val refreshResult =
+                                attemptAbsTokenRefresh(
+                                    currentBaseUrl,
+                                    refreshToken,
+                                    baseOkHttpClient,
+                                )
                             if (refreshResult != null) {
                                 securePreferencesRepository.updateCachedAudiobookshelfTokens(
                                     refreshResult.first,
@@ -505,13 +681,17 @@ object NetworkModule {
     private fun attemptAbsTokenRefresh(
         baseUrl: String,
         refreshToken: String,
+        baseClient: OkHttpClient,
     ): Pair<String, String?>? {
         return try {
             val refreshUrl = "${baseUrl}auth/refresh"
             val refreshClient =
-                OkHttpClient.Builder()
+                baseClient
+                    .newBuilder()
                     .connectTimeout(10, TimeUnit.SECONDS)
                     .readTimeout(10, TimeUnit.SECONDS)
+                    .followRedirects(false)
+                    .followSslRedirects(false)
                     .build()
 
             val request =
@@ -525,8 +705,7 @@ object NetworkModule {
             val response = refreshClient.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body.string()
-                Timber.d("ABS token refresh response: $body")
-                val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                val json = Json { ignoreUnknownKeys = true }
                 val jsonObj = json.parseToJsonElement(body).jsonObject
                 val userObj = jsonObj["user"]?.jsonObject
                 val newAccessToken =
@@ -553,12 +732,11 @@ object NetworkModule {
         }
     }
 
-    private val audiobookshelfJson =
-        kotlinx.serialization.json.Json {
-            ignoreUnknownKeys = true
-            isLenient = true
-            encodeDefaults = true
-        }
+    private val audiobookshelfJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        encodeDefaults = true
+    }
 
     @Provides
     @Singleton
@@ -587,10 +765,11 @@ object NetworkModule {
     @TmdbClient
     fun provideTmdbRetrofit(baseOkHttpClient: OkHttpClient): Retrofit {
         val contentType = "application/json".toMediaType()
+        val tmdbClient = baseOkHttpClient.newBuilder().connectTimeout(5, TimeUnit.SECONDS).build()
 
         return Retrofit.Builder()
             .baseUrl("https://api.themoviedb.org/")
-            .client(baseOkHttpClient)
+            .client(tmdbClient)
             .addConverterFactory(jellyseerrJson.asConverterFactory(contentType))
             .build()
     }
@@ -618,5 +797,58 @@ object NetworkModule {
     @Singleton
     fun provideMdbListApiService(@MdbListClient retrofit: Retrofit): MdbListApiService {
         return retrofit.create(MdbListApiService::class.java)
+    }
+
+    @Provides
+    @Singleton
+    @OmdbClient
+    fun provideOmdbRetrofit(baseOkHttpClient: OkHttpClient): Retrofit {
+        val contentType = "application/json".toMediaType()
+
+        val json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
+
+        return Retrofit.Builder()
+            .baseUrl("https://www.omdbapi.com/")
+            .client(baseOkHttpClient)
+            .addConverterFactory(json.asConverterFactory(contentType))
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideOmdbApiService(@OmdbClient retrofit: Retrofit): OmdbApiService {
+        return retrofit.create(OmdbApiService::class.java)
+    }
+
+    @Provides
+    @Singleton
+    @AudnexusClient
+    fun provideAudnexusRetrofit(baseOkHttpClient: OkHttpClient): Retrofit {
+        val contentType = "application/json".toMediaType()
+        val json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
+        return Retrofit.Builder()
+            .baseUrl("https://api.audnex.us/")
+            .client(
+                baseOkHttpClient
+                    .newBuilder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .callTimeout(15, TimeUnit.SECONDS)
+                    .build()
+            )
+            .addConverterFactory(json.asConverterFactory(contentType))
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideAudnexusApiService(@AudnexusClient retrofit: Retrofit): AudnexusApiService {
+        return retrofit.create(AudnexusApiService::class.java)
     }
 }

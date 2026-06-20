@@ -17,6 +17,16 @@ object DatabaseMigrations {
             override fun migrate(db: SupportSQLiteDatabase) {}
         }
 
+    val MIGRATION_3_4 =
+        object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {}
+        }
+
+    val MIGRATION_4_5 =
+        object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {}
+        }
+
     val MIGRATION_5_6 =
         object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -206,6 +216,16 @@ object DatabaseMigrations {
                         .trimIndent()
                 )
             }
+        }
+
+    val MIGRATION_19_20 =
+        object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {}
+        }
+
+    val MIGRATION_20_21 =
+        object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {}
         }
 
     val MIGRATION_21_22 =
@@ -675,10 +695,434 @@ object DatabaseMigrations {
             }
         }
 
+    val MIGRATION_34_35 =
+        object : Migration(34, 35) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS jellyseerr_addresses (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        jellyfinServerId TEXT NOT NULL,
+                        jellyfinUserId TEXT NOT NULL,
+                        address TEXT NOT NULL
+                    )"""
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS audiobookshelf_addresses (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        jellyfinServerId TEXT NOT NULL,
+                        jellyfinUserId TEXT NOT NULL,
+                        address TEXT NOT NULL
+                    )"""
+                )
+            }
+        }
+
+    val MIGRATION_35_36 =
+        object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS jellyfin_stats_cache (
+                        serverId TEXT PRIMARY KEY NOT NULL,
+                        movieCount INTEGER NOT NULL,
+                        seriesCount INTEGER NOT NULL,
+                        episodeCount INTEGER NOT NULL,
+                        boxsetCount INTEGER NOT NULL,
+                        lastUpdated INTEGER NOT NULL
+                    )
+                    """
+                        .trimIndent()
+                )
+            }
+        }
+
+    val MIGRATION_36_37 =
+        object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS abs_downloads (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        libraryItemId TEXT NOT NULL,
+                        episodeId TEXT,
+                        jellyfinServerId TEXT NOT NULL,
+                        jellyfinUserId TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        authorName TEXT,
+                        mediaType TEXT NOT NULL,
+                        coverUrl TEXT,
+                        duration REAL NOT NULL,
+                        status TEXT NOT NULL,
+                        progress REAL NOT NULL,
+                        bytesDownloaded INTEGER NOT NULL,
+                        totalBytes INTEGER NOT NULL,
+                        tracksTotal INTEGER NOT NULL,
+                        tracksDownloaded INTEGER NOT NULL,
+                        error TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        localDirPath TEXT,
+                        serializedSession TEXT
+                    )
+                    """
+                        .trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS index_abs_downloads_item
+                    ON abs_downloads (libraryItemId, episodeId, jellyfinServerId, jellyfinUserId)
+                    """
+                        .trimIndent()
+                )
+            }
+        }
+
+    val MIGRATION_37_38 =
+        object : Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE audiobookshelf_items ADD COLUMN serializedEpisodes TEXT")
+            }
+        }
+
+    val MIGRATION_38_39 =
+        object : Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE abs_downloads ADD COLUMN episodeDescription TEXT")
+                db.execSQL("ALTER TABLE abs_downloads ADD COLUMN publishedAt INTEGER")
+            }
+        }
+
+    val MIGRATION_39_40 =
+        object : Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `genre_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `show_genre_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `genre_movie_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `genre_show_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `studio_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `library_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `movie_section_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `boxset_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `boxset_cache_metadata`")
+                db.execSQL("DROP TABLE IF EXISTS `item_metadata_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `person_section_cache`")
+                db.execSQL("DROP TABLE IF EXISTS `top_people_cache`")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `genre_cache` (
+                        `genreName` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `lastFetchedTimestamp` INTEGER NOT NULL,
+                        `movieCount` INTEGER NOT NULL,
+                        PRIMARY KEY(`genreName`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `show_genre_cache` (
+                        `genreName` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `lastFetchedTimestamp` INTEGER NOT NULL,
+                        `showCount` INTEGER NOT NULL,
+                        PRIMARY KEY(`genreName`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `genre_movie_cache` (
+                        `genreName` TEXT NOT NULL,
+                        `movieId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `movieData` TEXT NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`genreName`, `movieId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `genre_show_cache` (
+                        `genreName` TEXT NOT NULL,
+                        `showId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `showData` TEXT NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`genreName`, `showId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `studio_cache` (
+                        `studioId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `studioData` TEXT NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`studioId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `library_cache` (
+                        `libraryId` TEXT NOT NULL,
+                        `itemId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `itemName` TEXT NOT NULL,
+                        `originalTitle` TEXT,
+                        `overview` TEXT NOT NULL,
+                        `itemType` TEXT NOT NULL,
+                        `productionYear` INTEGER,
+                        `communityRating` REAL,
+                        `criticRating` REAL,
+                        `primaryImageUrl` TEXT,
+                        `backdropImageUrl` TEXT,
+                        `logoImageUrl` TEXT,
+                        `thumbImageUrl` TEXT,
+                        `showPrimaryImageUrl` TEXT,
+                        `showBackdropImageUrl` TEXT,
+                        `showLogoImageUrl` TEXT,
+                        `genres` TEXT NOT NULL,
+                        `played` INTEGER NOT NULL,
+                        `favorite` INTEGER NOT NULL,
+                        `playbackPositionTicks` INTEGER NOT NULL,
+                        `runtimeTicks` INTEGER NOT NULL,
+                        `episodeCount` INTEGER,
+                        `seasonCount` INTEGER,
+                        `unplayedItemCount` INTEGER,
+                        `officialRating` TEXT,
+                        `status` TEXT NOT NULL,
+                        `premiereDate` TEXT,
+                        `endDate` TEXT,
+                        `tagline` TEXT,
+                        `trailer` TEXT,
+                        `cacheTimestamp` INTEGER NOT NULL,
+                        `sortBy` TEXT NOT NULL,
+                        `sortDescending` INTEGER NOT NULL,
+                        `filterType` TEXT NOT NULL,
+                        PRIMARY KEY(`libraryId`, `itemId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `movie_section_cache` (
+                        `sectionId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `referenceMovieData` TEXT NOT NULL,
+                        `recommendedItemsData` TEXT NOT NULL,
+                        `sectionType` TEXT NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`sectionId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `boxset_cache` (
+                        `itemId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `boxSetIds` TEXT NOT NULL,
+                        `lastUpdated` INTEGER NOT NULL,
+                        PRIMARY KEY(`itemId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `boxset_cache_metadata` (
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `lastFullBuild` INTEGER NOT NULL,
+                        `cacheVersion` INTEGER NOT NULL,
+                        PRIMARY KEY(`serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `item_metadata_cache` (
+                        `itemId` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `tmdbReviews` TEXT NOT NULL,
+                        `mdbRatings` TEXT NOT NULL,
+                        `lastUpdated` INTEGER NOT NULL,
+                        PRIMARY KEY(`itemId`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `person_section_cache` (
+                        `cacheKey` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `personData` TEXT NOT NULL,
+                        `itemsData` TEXT NOT NULL,
+                        `sectionType` TEXT NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`cacheKey`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `top_people_cache` (
+                        `personType` TEXT NOT NULL,
+                        `serverId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `peopleData` TEXT NOT NULL,
+                        `cachedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`personType`, `serverId`, `userId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+                db.execSQL(
+                    "DELETE FROM downloads WHERE serverId = '' OR userId = '00000000-0000-0000-0000-000000000000'"
+                )
+            }
+        }
+
+    val MIGRATION_40_41 =
+        object : Migration(40, 41) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_movies_server ON movies(serverId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_shows_server ON shows(serverId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_seasons_server ON seasons(serverId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_episodes_server ON episodes(serverId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_userdata_server_user ON userdata(serverId, userId)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_userdata_item ON userdata(itemId)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_downloads_scoped ON downloads(itemId, serverId, userId)"
+                )
+            }
+        }
+
+    val MIGRATION_41_42 =
+        object : Migration(41, 42) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE userdata ADD COLUMN audioStreamIndex INTEGER DEFAULT NULL")
+                db.execSQL(
+                    "ALTER TABLE userdata ADD COLUMN subtitleStreamIndex INTEGER DEFAULT NULL"
+                )
+            }
+        }
+
+    val MIGRATION_42_43 =
+        object : Migration(42, 43) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN isAdmin INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+    val MIGRATION_43_44 =
+        object : Migration(43, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE userdata ADD COLUMN likes INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+    val MIGRATION_44_45 =
+        object : Migration(44, 45) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE item_metadata_cache ADD COLUMN mdbRatingBadges TEXT NOT NULL DEFAULT '{\"certifiedFresh\":false,\"verifiedHot\":false}'"
+                )
+            }
+        }
+
+    val MIGRATION_45_46 =
+        object : Migration(45, 46) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE item_metadata_cache ADD COLUMN omdbAwards TEXT")
+            }
+        }
+
+    val MIGRATION_46_47 =
+        object : Migration(46, 47) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `audible_ratings` (
+                        `itemId` TEXT NOT NULL,
+                        `jellyfinServerId` TEXT NOT NULL,
+                        `jellyfinUserId` TEXT NOT NULL,
+                        `asin` TEXT NOT NULL,
+                        `rating` REAL NOT NULL,
+                        `numRatings` INTEGER,
+                        `fetchedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`itemId`, `jellyfinServerId`, `jellyfinUserId`)
+                    )
+                    """
+                        .trimIndent()
+                )
+            }
+        }
+
+    val MIGRATION_47_48 =
+        object : Migration(47, 48) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE downloads ADD COLUMN storageVolumeId TEXT NOT NULL DEFAULT 'primary'"
+                )
+            }
+        }
+
+    val MIGRATION_48_49 =
+        object : Migration(48, 49) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE abs_downloads ADD COLUMN storageVolumeId TEXT NOT NULL DEFAULT 'primary'"
+                )
+            }
+        }
+
     val ALL_MIGRATIONS =
         arrayOf(
             MIGRATION_1_2,
             MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
             MIGRATION_5_6,
             MIGRATION_6_7,
             MIGRATION_7_8,
@@ -693,6 +1137,8 @@ object DatabaseMigrations {
             MIGRATION_16_17,
             MIGRATION_17_18,
             MIGRATION_18_19,
+            MIGRATION_19_20,
+            MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
             MIGRATION_23_24,
@@ -706,5 +1152,20 @@ object DatabaseMigrations {
             MIGRATION_31_32,
             MIGRATION_32_33,
             MIGRATION_33_34,
+            MIGRATION_34_35,
+            MIGRATION_35_36,
+            MIGRATION_36_37,
+            MIGRATION_37_38,
+            MIGRATION_38_39,
+            MIGRATION_39_40,
+            MIGRATION_40_41,
+            MIGRATION_41_42,
+            MIGRATION_42_43,
+            MIGRATION_43_44,
+            MIGRATION_44_45,
+            MIGRATION_45_46,
+            MIGRATION_46_47,
+            MIGRATION_47_48,
+            MIGRATION_48_49,
         )
 }

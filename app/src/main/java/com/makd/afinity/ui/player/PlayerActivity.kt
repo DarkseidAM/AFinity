@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
@@ -106,6 +107,8 @@ class PlayerActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemUI()
 
+        window.colorMode = ActivityInfo.COLOR_MODE_HDR
+
         val itemId =
             intent.getStringExtra("itemId")?.let { UUID.fromString(it) }
                 ?: run {
@@ -145,11 +148,12 @@ class PlayerActivity : ComponentActivity() {
             }
 
             LaunchedEffect(uiState.resolvedOrientation, uiState.isCasting) {
-                requestedOrientation = if (uiState.isCasting) {
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                } else {
-                    uiState.resolvedOrientation
-                }
+                requestedOrientation =
+                    if (uiState.isCasting) {
+                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    } else {
+                        uiState.resolvedOrientation
+                    }
             }
 
             AFinityTheme(themeMode = themeMode, dynamicColor = dynamicColors) {
@@ -194,9 +198,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun buildPipParams(): PictureInPictureParams {
-        val playerView = viewModel.getPlayerView()
-        val viewWidth = playerView?.width ?: resources.displayMetrics.widthPixels
-        val viewHeight = playerView?.height ?: resources.displayMetrics.heightPixels
+        val rootView = window.decorView
+        val viewWidth = rootView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val viewHeight = rootView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
 
         val displayAspectRatio = Rational(viewWidth, viewHeight)
 

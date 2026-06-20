@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +59,9 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.makd.afinity.R
+import com.makd.afinity.data.models.audiobookshelf.AbsDownloadInfo
+import com.makd.afinity.data.models.audiobookshelf.AbsDownloadStatus
+import com.makd.afinity.data.models.audiobookshelf.AudibleRating
 import com.makd.afinity.data.models.audiobookshelf.LibraryItem
 import com.makd.afinity.data.models.audiobookshelf.MediaProgress
 import com.makd.afinity.ui.components.CircleFlagIcon
@@ -68,10 +74,17 @@ fun ItemHeader(
     progress: MediaProgress?,
     serverUrl: String?,
     onPlay: () -> Unit,
+    downloadInfo: AbsDownloadInfo? = null,
+    onDownload: (() -> Unit)? = null,
+    onCancelDownload: (() -> Unit)? = null,
+    onDeleteDownload: (() -> Unit)? = null,
+    audibleRating: AudibleRating? = null,
     modifier: Modifier = Modifier,
 ) {
     val coverUrl =
-        if (serverUrl != null && item.media.coverPath != null) {
+        if (downloadInfo?.status == AbsDownloadStatus.COMPLETED && downloadInfo.localDirPath != null) {
+            "file://${downloadInfo.localDirPath}/cover.jpg"
+        } else if (serverUrl != null && item.media.coverPath != null) {
             "$serverUrl/api/items/${item.id}/cover"
         } else null
 
@@ -80,7 +93,17 @@ fun ItemHeader(
             ItemHeroBackground(coverUrl = coverUrl)
         }
 
-        ItemHeaderContent(item = item, progress = progress, coverUrl = coverUrl, onPlay = onPlay)
+        ItemHeaderContent(
+            item = item,
+            progress = progress,
+            coverUrl = coverUrl,
+            onPlay = onPlay,
+            downloadInfo = downloadInfo,
+            onDownload = onDownload,
+            onCancelDownload = onCancelDownload,
+            onDeleteDownload = onDeleteDownload,
+            audibleRating = audibleRating,
+        )
     }
 }
 
@@ -127,6 +150,11 @@ fun ItemHeaderContent(
     progress: MediaProgress?,
     coverUrl: String?,
     onPlay: () -> Unit,
+    downloadInfo: AbsDownloadInfo? = null,
+    onDownload: (() -> Unit)? = null,
+    onCancelDownload: (() -> Unit)? = null,
+    onDeleteDownload: (() -> Unit)? = null,
+    audibleRating: AudibleRating? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -139,7 +167,7 @@ fun ItemHeaderContent(
         if (coverUrl != null) {
             AsyncImage(
                 model = coverUrl,
-                contentDescription = "Cover",
+                contentDescription = stringResource(R.string.cd_abs_cover),
                 modifier =
                     Modifier.width(200.dp)
                         .aspectRatio(1f)
@@ -161,7 +189,7 @@ fun ItemHeaderContent(
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = item.media.metadata.title ?: "Unknown Title",
+            text = item.media.metadata.title ?: stringResource(R.string.unknown_title),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             maxLines = 3,
@@ -172,7 +200,7 @@ fun ItemHeaderContent(
         item.media.metadata.authorName?.let { author ->
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "by $author",
+                text = stringResource(R.string.abs_by_author_fmt, author),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Medium,
@@ -203,7 +231,7 @@ fun ItemHeaderContent(
 
                     Icon(
                         painter = painterResource(id = R.drawable.ic_check),
-                        contentDescription = "Finished",
+                        contentDescription = stringResource(R.string.cd_finished),
                         tint = Color(0xFF4CAF50),
                         modifier = Modifier.size(14.dp),
                     )
@@ -211,7 +239,7 @@ fun ItemHeaderContent(
                     Spacer(modifier = Modifier.width(4.dp))
 
                     Text(
-                        text = "Finished",
+                        text = stringResource(R.string.abs_finished),
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFF4CAF50),
                         fontWeight = FontWeight.SemiBold,
@@ -294,7 +322,7 @@ fun ItemHeaderContent(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_language),
-                            contentDescription = "Language",
+                            contentDescription = stringResource(R.string.cd_abs_language),
                             tint = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.size(16.dp),
                         )
@@ -325,7 +353,7 @@ fun ItemHeaderContent(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_explicit),
-                            contentDescription = "Explicit",
+                            contentDescription = stringResource(R.string.cd_abs_explicit),
                             tint = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier.padding(2.dp).size(14.dp),
                         )
@@ -343,7 +371,7 @@ fun ItemHeaderContent(
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_abridged),
-                            contentDescription = "Abridged",
+                            contentDescription = stringResource(R.string.cd_abs_abridged),
                             tint = MaterialTheme.colorScheme.onTertiaryContainer,
                             modifier = Modifier.padding(2.dp).size(14.dp),
                         )
@@ -352,39 +380,126 @@ fun ItemHeaderContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (audibleRating != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            AudibleRatingRow(rating = audibleRating)
+            Spacer(modifier = Modifier.height(12.dp))
+        } else {
+            Spacer(modifier = Modifier.height(24.dp))
+        }
 
-        Button(
-            onClick = onPlay,
+        val showSplit = onDownload != null
+        val primaryColors =
+            ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            )
+
+        Row(
             modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+            Button(
+                onClick = onPlay,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                shape =
+                    if (showSplit) RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+                    else RoundedCornerShape(28.dp),
+                colors = primaryColors,
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_player_play_filled),
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_player_play_filled),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text =
+                            when {
+                                progress != null && progress.isFinished ->
+                                    stringResource(R.string.abs_listen_again)
+                                progress != null && progress.progress > 0 ->
+                                    stringResource(R.string.abs_continue_listening)
+                                else -> stringResource(R.string.action_play)
+                            },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            if (showSplit) {
+                Box(
+                    modifier =
+                        Modifier.width(1.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text =
-                        when {
-                            progress != null && progress.isFinished -> "Listen Again"
-                            progress != null && progress.progress > 0 -> "Continue Listening"
-                            else -> "Play"
-                        },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
+
+                Button(
+                    onClick = {
+                        when (downloadInfo?.status) {
+                            AbsDownloadStatus.QUEUED,
+                            AbsDownloadStatus.DOWNLOADING -> onCancelDownload?.invoke()
+                            AbsDownloadStatus.COMPLETED -> onDeleteDownload?.invoke()
+                            else -> onDownload?.invoke()
+                        }
+                    },
+                    modifier = Modifier.width(64.dp).fillMaxHeight(),
+                    shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+                    colors = primaryColors,
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    when (downloadInfo?.status) {
+                        AbsDownloadStatus.DOWNLOADING -> {
+                            Box(contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(
+                                    progress = { downloadInfo.progress },
+                                    modifier = Modifier.size(30.dp),
+                                    strokeWidth = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    trackColor =
+                                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
+                                )
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_cancel),
+                                    contentDescription =
+                                        stringResource(R.string.cd_cancel_download),
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+                        }
+                        AbsDownloadStatus.QUEUED -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
+                            )
+                        }
+                        AbsDownloadStatus.COMPLETED -> {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_delete),
+                                contentDescription = stringResource(R.string.cd_delete_download),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.errorContainer,
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_download),
+                                contentDescription = stringResource(R.string.cd_abs_download),
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -413,7 +528,7 @@ internal fun ExpandableSynopsis(description: String, modifier: Modifier = Modifi
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            text = "Overview",
+            text = stringResource(R.string.abs_overview),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
         )
@@ -457,7 +572,9 @@ internal fun ExpandableSynopsis(description: String, modifier: Modifier = Modifi
         if (isEllipsized || isExpanded) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = if (isExpanded) "Show Less" else "Read more",
+                text =
+                    if (isExpanded) stringResource(R.string.abs_show_less)
+                    else stringResource(R.string.abs_read_more),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
@@ -489,7 +606,7 @@ internal fun ItemDetailsSection(item: LibraryItem, modifier: Modifier = Modifier
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            text = "Details",
+            text = stringResource(R.string.abs_details),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
         )
@@ -498,9 +615,10 @@ internal fun ItemDetailsSection(item: LibraryItem, modifier: Modifier = Modifier
         if (hasPublisherOrYear) {
             val label =
                 when {
-                    !publisher.isNullOrBlank() && !year.isNullOrBlank() -> "Publisher"
-                    !publisher.isNullOrBlank() -> "Publisher"
-                    else -> "Year"
+                    !publisher.isNullOrBlank() && !year.isNullOrBlank() ->
+                        stringResource(R.string.abs_publisher)
+                    !publisher.isNullOrBlank() -> stringResource(R.string.abs_publisher)
+                    else -> stringResource(R.string.abs_year)
                 }
             val value =
                 when {
@@ -515,7 +633,7 @@ internal fun ItemDetailsSection(item: LibraryItem, modifier: Modifier = Modifier
         if (hasTags) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Tags",
+                text = stringResource(R.string.abs_tags),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -568,6 +686,34 @@ private fun DetailRow(label: String, value: String) {
             },
         style = MaterialTheme.typography.bodyMedium,
     )
+}
+
+@Composable
+private fun AudibleRatingRow(rating: AudibleRating, modifier: Modifier = Modifier) {
+    val amber = Color(0xFFFFC107)
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_star),
+            contentDescription = null,
+            tint = amber,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text = "%.1f".format(rating.rating),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "on Audible",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 private fun formatDuration(seconds: Double): String {

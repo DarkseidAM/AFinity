@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,7 +27,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,22 +43,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.makd.afinity.R
 import com.makd.afinity.data.models.download.DownloadInfo
 import com.makd.afinity.data.models.extensions.primaryBlurHash
 import com.makd.afinity.data.models.extensions.primaryImageUrl
+import com.makd.afinity.data.models.extensions.showBackdropBlurHash
+import com.makd.afinity.data.models.extensions.showBackdropImageUrl
+import com.makd.afinity.data.models.extensions.showPrimaryBlurHash
+import com.makd.afinity.data.models.extensions.showPrimaryImageUrl
+import com.makd.afinity.data.models.extensions.showThumbBlurHash
+import com.makd.afinity.data.models.extensions.showThumbImageUrl
 import com.makd.afinity.data.models.extensions.thumbBlurHash
 import com.makd.afinity.data.models.extensions.thumbImageUrl
 import com.makd.afinity.data.models.media.AfinityEpisode
+import com.makd.afinity.navigation.LocalShowRatings
 import com.makd.afinity.ui.components.AsyncImage
+import com.makd.afinity.ui.item.components.shared.AdminAction
 import com.makd.afinity.ui.item.components.shared.PlaybackSelection
 import com.makd.afinity.ui.item.components.shared.PlaybackSelectionButton
+import org.jellyfin.sdk.model.api.MediaStreamType
 import java.text.SimpleDateFormat
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Date
 import java.util.Locale
-import org.jellyfin.sdk.model.api.MediaStreamType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +84,11 @@ fun EpisodeDetailOverlay(
     onPauseDownload: () -> Unit,
     onResumeDownload: () -> Unit,
     onCancelDownload: () -> Unit,
+    canDownload: Boolean = true,
+    onDownloadLongClick: (() -> Unit)? = null,
     onGoToSeries: (() -> Unit)? = null,
+    isAdmin: Boolean = false,
+    onAdminAction: (AdminAction) -> Unit = {},
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -108,21 +126,47 @@ fun EpisodeDetailOverlay(
                     stringResource(
                         R.string.episode_season_episode_fmt,
                         episode.parentIndexNumber ?: 0,
-                        episode.indexNumber ?: 0,
+                        if (
+                            episode.indexNumberEnd != null &&
+                                episode.indexNumberEnd != episode.indexNumber
+                        )
+                            "${episode.indexNumber ?: 0}-${episode.indexNumberEnd}"
+                        else "${episode.indexNumber ?: 0}",
                         episode.name,
                     ),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            val isUnaired =
+                remember(episode.premiereDate) {
+                    episode.premiereDate?.isAfter(java.time.LocalDateTime.now()) == true
+                }
+
             val imageUrl =
-                remember(episode.id) {
-                    episode.images.primaryImageUrl ?: episode.images.thumbImageUrl
+                remember(episode.id, isUnaired) {
+                    if (isUnaired) {
+                        episode.images.thumbImageUrl
+                            ?: episode.images.showThumbImageUrl
+                            ?: episode.images.showBackdropImageUrl
+                            ?: episode.images.showPrimaryImageUrl
+                            ?: episode.images.primaryImageUrl
+                    } else {
+                        episode.images.primaryImageUrl ?: episode.images.thumbImageUrl
+                    }
                 }
 
             val blurHash =
-                remember(episode.id) {
-                    episode.images.primaryBlurHash ?: episode.images.thumbBlurHash
+                remember(episode.id, isUnaired) {
+                    if (isUnaired) {
+                        episode.images.thumbBlurHash
+                            ?: episode.images.showThumbBlurHash
+                            ?: episode.images.showBackdropBlurHash
+                            ?: episode.images.showPrimaryBlurHash
+                            ?: episode.images.primaryBlurHash
+                    } else {
+                        episode.images.primaryBlurHash ?: episode.images.thumbBlurHash
+                    }
                 }
 
             AsyncImage(
@@ -148,15 +192,42 @@ fun EpisodeDetailOverlay(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_calendar),
-                            contentDescription = stringResource(R.string.cd_air_date),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp),
-                        )
+                        if (isUnaired || episode.missing) {
+                            Box(
+                                modifier =
+                                    Modifier.background(
+                                            if (isUnaired) Color(0xFF2E7D32).copy(alpha = 0.9f)
+                                            else Color.Red.copy(alpha = 0.8f),
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text =
+                                        if (isUnaired) stringResource(R.string.episode_upcoming)
+                                        else stringResource(R.string.episode_missing),
+                                    color = Color.White,
+                                    style =
+                                        MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 0.5.sp,
+                                        ),
+                                )
+                            }
+                            MetadataDot()
+                        } else {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_calendar),
+                                contentDescription = stringResource(R.string.cd_air_date),
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+
+                        val formattedDate =
+                            date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
                         Text(
-                            text =
-                                date.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)),
+                            text = if (isUnaired) "Airs on $formattedDate" else formattedDate,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -187,24 +258,36 @@ fun EpisodeDetailOverlay(
                     needsSeparator = true
                 }
 
-                episode.communityRating?.let { rating ->
+                if ((episode.partCount ?: 0) > 1) {
                     if (needsSeparator) MetadataDot()
+                    Text(
+                        text = stringResource(R.string.meta_parts_fmt, episode.partCount!!),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    needsSeparator = true
+                }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_imdb_logo),
-                            contentDescription = stringResource(R.string.cd_imdb),
-                            tint = Color.Unspecified,
-                            modifier = Modifier.size(22.dp),
-                        )
-                        Text(
-                            text = String.format(Locale.US, "%.1f", rating),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                if (LocalShowRatings.current) {
+                    episode.communityRating?.let { rating ->
+                        if (needsSeparator) MetadataDot()
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_imdb_logo),
+                                contentDescription = stringResource(R.string.cd_imdb),
+                                tint = Color.Unspecified,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Text(
+                                text = String.format(Locale.US, "%.1f", rating),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -358,16 +441,18 @@ fun EpisodeDetailOverlay(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PlaybackSelectionButton(
-                    item = episode,
-                    buttonText =
-                        if (episode.playbackPositionTicks > 0)
-                            stringResource(R.string.episode_resume)
-                        else stringResource(R.string.episode_play),
-                    buttonIcon = painterResource(id = R.drawable.ic_player_play_filled),
-                    onPlayClick = { selection -> onPlayClick(episode, selection) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (!episode.missing) {
+                    PlaybackSelectionButton(
+                        item = episode,
+                        buttonText =
+                            if (episode.playbackPositionTicks > 0)
+                                stringResource(R.string.episode_resume)
+                            else stringResource(R.string.episode_play),
+                        buttonIcon = painterResource(id = R.drawable.ic_player_play_filled),
+                        onPlayClick = { selection -> onPlayClick(episode, selection) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -383,6 +468,7 @@ fun EpisodeDetailOverlay(
                             )
                         }
                     }
+
                     IconButton(onClick = onToggleWatchlist) {
                         Icon(
                             painter =
@@ -411,26 +497,102 @@ fun EpisodeDetailOverlay(
                         )
                     }
 
-                    IconButton(onClick = onToggleWatched) {
-                        Icon(
-                            painter =
-                                if (episode.played) painterResource(id = R.drawable.ic_circle_check)
-                                else painterResource(id = R.drawable.ic_circle_check_outline),
-                            contentDescription = stringResource(R.string.cd_toggle_watched),
-                            tint =
-                                if (episode.played) Color.Green
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(28.dp),
+                    if (!episode.missing) {
+                        IconButton(onClick = onToggleWatched) {
+                            Icon(
+                                painter =
+                                    if (episode.played)
+                                        painterResource(id = R.drawable.ic_circle_check)
+                                    else painterResource(id = R.drawable.ic_circle_check_outline),
+                                contentDescription = stringResource(R.string.cd_toggle_watched),
+                                tint =
+                                    if (episode.played) Color.Green
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
+                    }
+
+                    if (!episode.missing) {
+                        DownloadProgressIndicator(
+                            downloadInfo = downloadInfo,
+                            onDownloadClick = onDownloadClick,
+                            onPauseClick = onPauseDownload,
+                            onResumeClick = onResumeDownload,
+                            onCancelClick = onCancelDownload,
+                            canDownload = canDownload,
+                            onDownloadLongClick = onDownloadLongClick,
                         )
                     }
 
-                    DownloadProgressIndicator(
-                        downloadInfo = downloadInfo,
-                        onDownloadClick = onDownloadClick,
-                        onPauseClick = onPauseDownload,
-                        onResumeClick = onResumeDownload,
-                        onCancelClick = onCancelDownload,
-                    )
+                    if (isAdmin) {
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_options),
+                                    contentDescription = stringResource(R.string.cd_admin_manage),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(stringResource(R.string.admin_action_edit_metadata))
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter =
+                                                painterResource(id = R.drawable.ic_edit_circle),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAdminAction(AdminAction.EditMetadata)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(stringResource(R.string.admin_action_edit_images))
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter =
+                                                painterResource(id = R.drawable.ic_photo_search),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAdminAction(AdminAction.EditImages)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(stringResource(R.string.admin_action_refresh_metadata))
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.ic_refresh),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onAdminAction(AdminAction.Refresh)
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

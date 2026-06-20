@@ -24,11 +24,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,14 +41,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
@@ -61,6 +68,7 @@ import com.makd.afinity.data.models.extensions.primaryImageUrl
 import com.makd.afinity.data.models.extensions.showBackdropImageUrl
 import com.makd.afinity.data.models.extensions.showLogoImageUrl
 import com.makd.afinity.data.models.mdblist.MdbListRating
+import com.makd.afinity.data.models.mdblist.MdbListRatingBadges
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
@@ -70,15 +78,21 @@ import com.makd.afinity.data.models.media.AfinityShow
 import com.makd.afinity.data.models.media.AfinityVideo
 import com.makd.afinity.data.models.tmdb.TmdbReview
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalPlayerOffset
+import com.makd.afinity.ui.admin.refresh.RefreshMetadataDialog
 import com.makd.afinity.ui.components.AsyncImage
+import com.makd.afinity.ui.components.FullScreenError
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.item.components.BoxSetDetailContent
 import com.makd.afinity.ui.item.components.EpisodeDetailOverlay
 import com.makd.afinity.ui.item.components.MovieDetailContent
 import com.makd.afinity.ui.item.components.QualitySelectionDialog
+import com.makd.afinity.ui.item.components.StorageLocationDialog
 import com.makd.afinity.ui.item.components.SeasonDetailContent
 import com.makd.afinity.ui.item.components.SeriesDetailContent
 import com.makd.afinity.ui.item.components.VersionPickerDialog
 import com.makd.afinity.ui.item.components.shared.ActionButtonsRow
+import com.makd.afinity.ui.item.components.shared.AdminAction
 import com.makd.afinity.ui.item.components.shared.HeroSection
 import com.makd.afinity.ui.item.components.shared.MediaSourceOption
 import com.makd.afinity.ui.item.components.shared.MetadataRow
@@ -110,6 +124,20 @@ fun ItemDetailScreen(
         viewModel.selectedEpisodeWatchlistStatus.collectAsStateWithLifecycle()
     val selectedEpisodeDownloadInfo by
         viewModel.selectedEpisodeDownloadInfo.collectAsStateWithLifecycle()
+    val canDownload by viewModel.canDownload.collectAsStateWithLifecycle()
+    val isAdmin by viewModel.isAdmin.collectAsStateWithLifecycle()
+    var showEpisodeRefreshDialog by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var pendingPlayItem by remember { mutableStateOf<AfinityItem?>(null) }
     var pendingPlaySelection by remember { mutableStateOf<PlaybackSelection?>(null) }
@@ -133,36 +161,15 @@ fun ItemDetailScreen(
     Box(modifier = modifier.fillMaxSize()) {
         when {
             uiState.isLoading -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                FullScreenLoading()
             }
             uiState.error != null -> {
-                Column(
-                    modifier = Modifier.align(Alignment.Center).padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.home_error_title),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Text(
-                        text = uiState.error!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = stringResource(R.string.home_error_message),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                FullScreenError(message = uiState.error!!)
             }
             uiState.item != null -> {
                 ItemDetailContent(
                     item = uiState.item!!,
+                    hasPlayableItems = uiState.hasPlayableItems,
                     seasons = uiState.seasons,
                     boxSetItems = uiState.boxSetItems,
                     containingBoxSets = uiState.containingBoxSets,
@@ -175,7 +182,10 @@ fun ItemDetailScreen(
                     downloadInfo = uiState.downloadInfo,
                     tmdbReviews = uiState.tmdbReviews,
                     mdbRatings = uiState.mdbRatings,
+                    mdbRatingBadges = uiState.mdbRatingBadges,
+                    omdbAwards = uiState.omdbAwards,
                     isRatingsFromCache = uiState.isRatingsFromCache,
+                    movieParts = uiState.movieParts,
                     onPlayClick = { item, selection -> interceptPlayClick(item, selection) },
                     onBoxSetItemClick = { item ->
                         if (item is AfinityEpisode) {
@@ -240,6 +250,7 @@ fun ItemDetailScreen(
                 onPauseDownload = { viewModel.pauseDownload() },
                 onResumeDownload = { viewModel.resumeDownload() },
                 onCancelDownload = { viewModel.cancelDownload() },
+                canDownload = canDownload,
                 onGoToSeries =
                     if (uiState.item !is AfinityShow && uiState.item !is AfinitySeason) {
                         {
@@ -247,7 +258,29 @@ fun ItemDetailScreen(
                             pendingNavigationSeriesId = episode.seriesId.toString()
                         }
                     } else null,
+                isAdmin = isAdmin,
+                onAdminAction = { action ->
+                    when (action) {
+                        AdminAction.EditMetadata ->
+                            navController.navigate(
+                                Destination.createEditMetadataRoute(episode.id.toString())
+                            )
+                        AdminAction.EditImages ->
+                            navController.navigate(
+                                Destination.createEditImagesRoute(episode.id.toString())
+                            )
+                        AdminAction.Refresh -> showEpisodeRefreshDialog = true
+                        AdminAction.Identify -> Unit
+                    }
+                },
             )
+
+            if (showEpisodeRefreshDialog) {
+                RefreshMetadataDialog(
+                    itemId = episode.id.toString(),
+                    onDismiss = { showEpisodeRefreshDialog = false },
+                )
+            }
         }
 
         LaunchedEffect(selectedEpisode, pendingNavigationSeriesId) {
@@ -275,8 +308,22 @@ fun ItemDetailScreen(
                     sources = remoteSources,
                     onSourceSelected = { source -> viewModel.onQualitySelected(source.id) },
                     onDismiss = { viewModel.dismissQualityDialog() },
+                    volumes = uiState.availableVolumes,
+                    selectedVolumeId = uiState.selectedVolumeId,
+                    onVolumeSelected = { viewModel.onVolumeSelected(it) },
+                    onConfirm = { source, _ -> viewModel.onQualitySelected(source.id) },
                 )
             }
+        }
+
+        if (uiState.showLocationDialog) {
+            StorageLocationDialog(
+                volumes = uiState.availableVolumes,
+                selectedVolumeId = uiState.selectedVolumeId,
+                onVolumeSelected = { viewModel.onVolumeSelected(it) },
+                onConfirm = { viewModel.onLocationConfirmed() },
+                onDismiss = { viewModel.dismissLocationDialog() },
+            )
         }
 
         if (showVersionPickerForPlay) {
@@ -316,6 +363,7 @@ fun ItemDetailScreen(
 @Composable
 private fun ItemDetailContent(
     item: AfinityItem,
+    hasPlayableItems: Boolean,
     seasons: List<AfinitySeason>,
     boxSetItems: List<AfinityItem>,
     containingBoxSets: List<AfinityBoxSet>,
@@ -328,7 +376,10 @@ private fun ItemDetailContent(
     downloadInfo: DownloadInfo?,
     tmdbReviews: List<TmdbReview>,
     mdbRatings: List<MdbListRating>,
+    mdbRatingBadges: MdbListRatingBadges,
+    omdbAwards: String?,
     isRatingsFromCache: Boolean,
+    movieParts: List<AfinityItem>,
     onPlayClick: (AfinityItem, PlaybackSelection?) -> Unit,
     onBoxSetItemClick: (AfinityItem) -> Unit,
     onSpecialFeatureClick: (AfinityItem) -> Unit,
@@ -343,6 +394,7 @@ private fun ItemDetailContent(
     if (isLandscape) {
         LandscapeItemDetailContent(
             item = item,
+            hasPlayableItems = hasPlayableItems,
             seasons = seasons,
             boxSetItems = boxSetItems,
             containingBoxSets = containingBoxSets,
@@ -355,7 +407,10 @@ private fun ItemDetailContent(
             downloadInfo = downloadInfo,
             tmdbReviews = tmdbReviews,
             mdbRatings = mdbRatings,
+            mdbRatingBadges = mdbRatingBadges,
+            omdbAwards = omdbAwards,
             isRatingsFromCache = isRatingsFromCache,
+            movieParts = movieParts,
             onPlayClick = onPlayClick,
             onBoxSetItemClick = onBoxSetItemClick,
             onSpecialFeatureClick = onSpecialFeatureClick,
@@ -367,6 +422,7 @@ private fun ItemDetailContent(
     } else {
         PortraitItemDetailContent(
             item = item,
+            hasPlayableItems = hasPlayableItems,
             seasons = seasons,
             boxSetItems = boxSetItems,
             containingBoxSets = containingBoxSets,
@@ -379,7 +435,10 @@ private fun ItemDetailContent(
             downloadInfo = downloadInfo,
             tmdbReviews = tmdbReviews,
             mdbRatings = mdbRatings,
+            mdbRatingBadges = mdbRatingBadges,
+            omdbAwards = omdbAwards,
             isRatingsFromCache = isRatingsFromCache,
+            movieParts = movieParts,
             onPlayClick = onPlayClick,
             onBoxSetItemClick = onBoxSetItemClick,
             onSpecialFeatureClick = onSpecialFeatureClick,
@@ -394,6 +453,7 @@ private fun ItemDetailContent(
 @Composable
 private fun LandscapeItemDetailContent(
     item: AfinityItem,
+    hasPlayableItems: Boolean,
     seasons: List<AfinitySeason>,
     boxSetItems: List<AfinityItem>,
     containingBoxSets: List<AfinityBoxSet>,
@@ -406,7 +466,10 @@ private fun LandscapeItemDetailContent(
     downloadInfo: DownloadInfo?,
     tmdbReviews: List<TmdbReview>,
     mdbRatings: List<MdbListRating>,
+    mdbRatingBadges: MdbListRatingBadges,
+    omdbAwards: String?,
     isRatingsFromCache: Boolean,
+    movieParts: List<AfinityItem>,
     onPlayClick: (AfinityItem, PlaybackSelection?) -> Unit,
     onBoxSetItemClick: (AfinityItem) -> Unit,
     onSpecialFeatureClick: (AfinityItem) -> Unit,
@@ -416,11 +479,15 @@ private fun LandscapeItemDetailContent(
     widthSizeClass: WindowWidthSizeClass,
 ) {
     val preferencesRepository = rememberPreferencesRepository()
-    val density = androidx.compose.ui.platform.LocalDensity.current
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val canDownload by viewModel.canDownload.collectAsStateWithLifecycle()
+    val isAdmin by viewModel.isAdmin.collectAsStateWithLifecycle()
+    var showRefreshDialog by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
     val statusBarHeight = WindowInsets.statusBars.getTop(density)
-    val displayCutoutLeft =
-        WindowInsets.displayCutout.getLeft(density, androidx.compose.ui.unit.LayoutDirection.Ltr)
+    val displayCutoutLeft = WindowInsets.displayCutout.getLeft(density, LayoutDirection.Ltr)
     val baseColorScheme = MaterialTheme.colorScheme
+    val playerOffset = LocalPlayerOffset.current
 
     val landscapeColorScheme =
         remember(baseColorScheme) {
@@ -472,19 +539,12 @@ private fun LandscapeItemDetailContent(
                         top = with(density) { statusBarHeight.toDp() + 16.dp },
                         start = with(density) { displayCutoutLeft.toDp() + 16.dp },
                         end = 16.dp,
-                        bottom = 16.dp,
+                        bottom = 16.dp + playerOffset,
                     ),
             ) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         MediaLogoHeader(item = item, isLandscape = true)
-
-                        MetadataRow(
-                            item = item,
-                            boxSetItems = boxSetItems,
-                            mdbRatings = mdbRatings,
-                            isRatingsFromCache = isRatingsFromCache,
-                        )
 
                         val mediaSourceOptions = rememberMediaSourceOptions(item)
                         val selectedMediaSource by
@@ -495,6 +555,12 @@ private fun LandscapeItemDetailContent(
                                 viewModel.selectMediaSource(mediaSourceOptions.first())
                             }
                         }
+
+                        MetadataRow(
+                            item = item,
+                            boxSetItems = boxSetItems,
+                            selectedSourceId = selectedMediaSource?.id,
+                        )
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -507,6 +573,11 @@ private fun LandscapeItemDetailContent(
                                         item = item,
                                         nextEpisode = nextEpisode,
                                         selectedMediaSource = selectedMediaSource,
+                                        isLoading =
+                                            viewModel.uiState
+                                                .collectAsStateWithLifecycle()
+                                                .value
+                                                .isLoading,
                                         onPlayRequested = { targetPlayItem, selection ->
                                             handlePlayRequest(
                                                 item,
@@ -525,6 +596,7 @@ private fun LandscapeItemDetailContent(
                                 isInWatchlist = isInWatchlist,
                                 hasTrailer = hasTrailer(item),
                                 downloadInfo = downloadInfo,
+                                hasPlayableItems = hasPlayableItems,
                                 onPlayTrailer = { playTrailer(item, context, viewModel) },
                                 onToggleWatchlist = { viewModel.toggleWatchlist() },
                                 onShufflePlay = { shufflePlay(item, nextEpisode, context) },
@@ -534,9 +606,47 @@ private fun LandscapeItemDetailContent(
                                 onPauseDownload = { viewModel.pauseDownload() },
                                 onResumeDownload = { viewModel.resumeDownload() },
                                 onCancelDownload = { viewModel.cancelDownload() },
+                                canDownload = canDownload,
                                 isLandscape = true,
+                                downloadUnavailable = uiState.downloadUnavailable,
+                                isAdmin = isAdmin,
+                                onDownloadLongClick = { viewModel.onDownloadLongClick() },
+                                onAdminAction = { action ->
+                                    when (action) {
+                                        AdminAction.EditMetadata ->
+                                            navController.navigate(
+                                                Destination.createEditMetadataRoute(
+                                                    item.id.toString()
+                                                )
+                                            )
+                                        AdminAction.Identify ->
+                                            navController.navigate(
+                                                Destination.createIdentifyItemRoute(
+                                                    item.id.toString(),
+                                                    when (item) {
+                                                        is AfinityShow -> "Series"
+                                                        else -> "Movie"
+                                                    },
+                                                )
+                                            )
+                                        AdminAction.EditImages ->
+                                            navController.navigate(
+                                                Destination.createEditImagesRoute(
+                                                    item.id.toString()
+                                                )
+                                            )
+                                        AdminAction.Refresh -> showRefreshDialog = true
+                                    }
+                                },
                                 modifier = Modifier.weight(2f),
                             )
+
+                            if (showRefreshDialog) {
+                                RefreshMetadataDialog(
+                                    itemId = item.id.toString(),
+                                    onDismiss = { showRefreshDialog = false },
+                                )
+                            }
                         }
 
                         VideoQualitySelection(
@@ -547,6 +657,7 @@ private fun LandscapeItemDetailContent(
 
                         TypeSpecificContent(
                             item = item,
+                            hasPlayableItems = hasPlayableItems,
                             seasons = seasons,
                             boxSetItems = boxSetItems,
                             containingBoxSets = containingBoxSets,
@@ -556,6 +667,11 @@ private fun LandscapeItemDetailContent(
                             specialFeatures = specialFeatures,
                             episodesPagingData = episodesPagingData,
                             tmdbReviews = tmdbReviews,
+                            mdbRatings = mdbRatings,
+                            mdbRatingBadges = mdbRatingBadges,
+                            omdbAwards = omdbAwards,
+                            isRatingsFromCache = isRatingsFromCache,
+                            movieParts = movieParts,
                             onPlayClick = onPlayClick,
                             onBoxSetItemClick = onBoxSetItemClick,
                             onSpecialFeatureClick = onSpecialFeatureClick,
@@ -574,6 +690,7 @@ private fun LandscapeItemDetailContent(
 @Composable
 private fun PortraitItemDetailContent(
     item: AfinityItem,
+    hasPlayableItems: Boolean,
     seasons: List<AfinitySeason>,
     boxSetItems: List<AfinityItem>,
     containingBoxSets: List<AfinityBoxSet>,
@@ -586,7 +703,10 @@ private fun PortraitItemDetailContent(
     downloadInfo: DownloadInfo?,
     tmdbReviews: List<TmdbReview>,
     mdbRatings: List<MdbListRating>,
+    mdbRatingBadges: MdbListRatingBadges,
+    omdbAwards: String?,
     isRatingsFromCache: Boolean,
+    movieParts: List<AfinityItem>,
     onPlayClick: (AfinityItem, PlaybackSelection?) -> Unit,
     onBoxSetItemClick: (AfinityItem) -> Unit,
     onSpecialFeatureClick: (AfinityItem) -> Unit,
@@ -597,12 +717,17 @@ private fun PortraitItemDetailContent(
 ) {
     val preferencesRepository = rememberPreferencesRepository()
     val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val canDownload by viewModel.canDownload.collectAsStateWithLifecycle()
+    val isAdmin by viewModel.isAdmin.collectAsStateWithLifecycle()
+    var showRefreshDialog by remember { mutableStateOf(false) }
+    val playerOffset = LocalPlayerOffset.current
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = bottomPadding + 16.dp),
+        contentPadding = PaddingValues(bottom = max(bottomPadding, playerOffset) + 16.dp),
     ) {
-        item { HeroSection(item = item, onPlayClick = onPlayClick) }
+        item { HeroSection(item = item) }
 
         item {
             Column(
@@ -614,13 +739,6 @@ private fun PortraitItemDetailContent(
             ) {
                 MediaLogoHeader(item = item, isLandscape = false)
 
-                MetadataRow(
-                    item = item,
-                    boxSetItems = boxSetItems,
-                    mdbRatings = mdbRatings,
-                    isRatingsFromCache = isRatingsFromCache,
-                )
-
                 val mediaSourceOptions = rememberMediaSourceOptions(item)
                 val selectedMediaSource by
                     viewModel.selectedMediaSource.collectAsStateWithLifecycle()
@@ -631,11 +749,18 @@ private fun PortraitItemDetailContent(
                     }
                 }
 
+                MetadataRow(
+                    item = item,
+                    boxSetItems = boxSetItems,
+                    selectedSourceId = selectedMediaSource?.id,
+                )
+
                 if (item !is AfinityBoxSet && item.canPlay) {
                     PrimaryPlaybackButton(
                         item = item,
                         nextEpisode = nextEpisode,
                         selectedMediaSource = selectedMediaSource,
+                        isLoading = viewModel.uiState.collectAsStateWithLifecycle().value.isLoading,
                         onPlayRequested = { targetPlayItem, selection ->
                             handlePlayRequest(item, targetPlayItem, selection, context, onPlayClick)
                         },
@@ -647,6 +772,7 @@ private fun PortraitItemDetailContent(
                     isInWatchlist = isInWatchlist,
                     hasTrailer = hasTrailer(item),
                     downloadInfo = downloadInfo,
+                    hasPlayableItems = hasPlayableItems,
                     onPlayTrailer = { playTrailer(item, context, viewModel) },
                     onToggleWatchlist = { viewModel.toggleWatchlist() },
                     onShufflePlay = { shufflePlay(item, nextEpisode, context) },
@@ -656,8 +782,42 @@ private fun PortraitItemDetailContent(
                     onPauseDownload = { viewModel.pauseDownload() },
                     onResumeDownload = { viewModel.resumeDownload() },
                     onCancelDownload = { viewModel.cancelDownload() },
+                    canDownload = canDownload,
                     isLandscape = false,
+                    downloadUnavailable = uiState.downloadUnavailable,
+                    isAdmin = isAdmin,
+                    onDownloadLongClick = { viewModel.onDownloadLongClick() },
+                    onAdminAction = { action ->
+                        when (action) {
+                            AdminAction.EditMetadata ->
+                                navController.navigate(
+                                    Destination.createEditMetadataRoute(item.id.toString())
+                                )
+                            AdminAction.Identify ->
+                                navController.navigate(
+                                    Destination.createIdentifyItemRoute(
+                                        item.id.toString(),
+                                        when (item) {
+                                            is AfinityShow -> "Series"
+                                            else -> "Movie"
+                                        },
+                                    )
+                                )
+                            AdminAction.EditImages ->
+                                navController.navigate(
+                                    Destination.createEditImagesRoute(item.id.toString())
+                                )
+                            AdminAction.Refresh -> showRefreshDialog = true
+                        }
+                    },
                 )
+
+                if (showRefreshDialog) {
+                    RefreshMetadataDialog(
+                        itemId = item.id.toString(),
+                        onDismiss = { showRefreshDialog = false },
+                    )
+                }
 
                 VideoQualitySelection(
                     mediaSourceOptions = mediaSourceOptions,
@@ -667,6 +827,7 @@ private fun PortraitItemDetailContent(
 
                 TypeSpecificContent(
                     item = item,
+                    hasPlayableItems = hasPlayableItems,
                     seasons = seasons,
                     boxSetItems = boxSetItems,
                     containingBoxSets = containingBoxSets,
@@ -676,6 +837,11 @@ private fun PortraitItemDetailContent(
                     specialFeatures = specialFeatures,
                     episodesPagingData = episodesPagingData,
                     tmdbReviews = tmdbReviews,
+                    mdbRatings = mdbRatings,
+                    mdbRatingBadges = mdbRatingBadges,
+                    omdbAwards = omdbAwards,
+                    isRatingsFromCache = isRatingsFromCache,
+                    movieParts = movieParts,
                     onPlayClick = onPlayClick,
                     onBoxSetItemClick = onBoxSetItemClick,
                     onSpecialFeatureClick = onSpecialFeatureClick,
@@ -691,6 +857,9 @@ private fun PortraitItemDetailContent(
 
 @Composable
 private fun ColumnScope.MediaLogoHeader(item: AfinityItem, isLandscape: Boolean) {
+    val density = LocalDensity.current
+    val windowInfo = LocalWindowInfo.current
+    val screenWidthDp = with(density) { windowInfo.containerSize.width.toDp() }
     val logoToDisplay = if (item is AfinitySeason) item.images.showLogo else item.images.logo
     val logoUrlToDisplay =
         if (item is AfinitySeason) {
@@ -704,7 +873,7 @@ private fun ColumnScope.MediaLogoHeader(item: AfinityItem, isLandscape: Boolean)
         AsyncImage(
             imageUrl = logoUrlToDisplay,
             contentDescription = stringResource(R.string.cd_logo_fmt, logoNameToDisplay),
-            targetWidth = if (isLandscape) 300.dp else 240.dp,
+            targetWidth = if (isLandscape) 300.dp else screenWidthDp * 0.8f,
             targetHeight = if (isLandscape) 150.dp else 120.dp,
             modifier =
                 Modifier.fillMaxWidth(0.8f)
@@ -733,6 +902,7 @@ private fun ColumnScope.MediaLogoHeader(item: AfinityItem, isLandscape: Boolean)
 @Composable
 private fun TypeSpecificContent(
     item: AfinityItem,
+    hasPlayableItems: Boolean,
     seasons: List<AfinitySeason>,
     boxSetItems: List<AfinityItem>,
     containingBoxSets: List<AfinityBoxSet>,
@@ -742,6 +912,11 @@ private fun TypeSpecificContent(
     specialFeatures: List<AfinityItem>,
     episodesPagingData: Flow<PagingData<AfinityEpisode>>?,
     tmdbReviews: List<TmdbReview>,
+    mdbRatings: List<MdbListRating>,
+    mdbRatingBadges: MdbListRatingBadges,
+    omdbAwards: String?,
+    isRatingsFromCache: Boolean,
+    movieParts: List<AfinityItem>,
     onPlayClick: (AfinityItem, PlaybackSelection?) -> Unit,
     onBoxSetItemClick: (AfinityItem) -> Unit,
     onSpecialFeatureClick: (AfinityItem) -> Unit,
@@ -759,6 +934,10 @@ private fun TypeSpecificContent(
                 specialFeatures = specialFeatures,
                 containingBoxSets = containingBoxSets,
                 tmdbReviews = tmdbReviews,
+                mdbRatings = mdbRatings,
+                mdbRatingBadges = mdbRatingBadges,
+                omdbAwards = omdbAwards,
+                isRatingsFromCache = isRatingsFromCache,
                 onEpisodeClick = { ep ->
                     val mediaSourceId = ep.sources.firstOrNull()?.id ?: return@SeriesDetailContent
                     val startPos =
@@ -802,6 +981,9 @@ private fun TypeSpecificContent(
                 specialFeatures = specialFeatures,
                 containingBoxSets = containingBoxSets,
                 tmdbReviews = tmdbReviews,
+                mdbRatings = mdbRatings,
+                mdbRatingBadges = mdbRatingBadges,
+                isRatingsFromCache = isRatingsFromCache,
                 onEpisodeClick = { ep -> viewModel.selectEpisode(ep) },
                 onSpecialFeatureClick = onSpecialFeatureClick,
                 navController = navController,
@@ -815,8 +997,14 @@ private fun TypeSpecificContent(
                 specialFeatures = specialFeatures,
                 containingBoxSets = containingBoxSets,
                 tmdbReviews = tmdbReviews,
+                mdbRatings = mdbRatings,
+                mdbRatingBadges = mdbRatingBadges,
+                omdbAwards = omdbAwards,
+                isRatingsFromCache = isRatingsFromCache,
+                parts = movieParts,
                 onSpecialFeatureClick = onSpecialFeatureClick,
                 onPlayClick = { movie, sel -> onPlayClick(movie, sel) },
+                onPartClick = { part -> onPlayClick(part, null) },
                 navController = navController,
                 widthSizeClass = widthSizeClass,
             )

@@ -1,6 +1,7 @@
 package com.makd.afinity.data.repository.jellyseerr
 
 import com.makd.afinity.data.database.AfinityDatabase
+import com.makd.afinity.data.database.entities.JellyseerrAddressEntity
 import com.makd.afinity.data.database.entities.JellyseerrConfigEntity
 import com.makd.afinity.data.database.entities.JellyseerrRequestEntity
 import com.makd.afinity.data.models.jellyseerr.CreateRequestBody
@@ -59,6 +60,7 @@ constructor(
     private val securePreferencesRepository: SecurePreferencesRepository,
     private val database: AfinityDatabase,
     private val networkConnectivityMonitor: NetworkConnectivityMonitor,
+    private val addressResolver: JellyseerrAddressResolver,
 ) : JellyseerrRepository {
 
     private val jellyseerrDao = database.jellyseerrDao()
@@ -80,6 +82,61 @@ constructor(
         private const val CACHE_VALIDITY_MS = 5 * 60 * 1000L
     }
 
+    init {
+        repositoryScope.launch {
+            networkConnectivityMonitor.isNetworkAvailable.collect { isAvailable ->
+                if (!isAvailable) return@collect
+                val (serverId, userId) = activeContext ?: return@collect
+                if (!_isAuthenticated.value) return@collect
+
+                val config = jellyseerrDao.getConfig(serverId, userId.toString()) ?: return@collect
+                try {
+                    val result =
+                        addressResolver.resolveAddress(
+                            serverId,
+                            userId.toString(),
+                            config.serverUrl,
+                        )
+                    if (
+                        result is JellyseerrAddressResult.Success &&
+                            result.address !=
+                                securePreferencesRepository.getCachedJellyseerrServerUrl()
+                    ) {
+                        Timber.d("Jellyseerr: Network changed, switching to ${result.address}")
+                        securePreferencesRepository.updateCachedJellyseerrServerUrl(result.address)
+                    }
+                } catch (e: Exception) {
+                    Timber.e(e, "Jellyseerr: Failed to re-resolve address on network change")
+                }
+            }
+        }
+    }
+
+    override suspend fun verifyServer(url: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                var cleanUrl = url.trim().removeSuffix("/")
+                if (!cleanUrl.endsWith("/api/v1/status", ignoreCase = true)) {
+                    cleanUrl = "$cleanUrl/api/v1/status"
+                }
+
+                val client =
+                    okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                val request = okhttp3.Request.Builder().url(cleanUrl).get().build()
+
+                val response = client.newCall(request).execute()
+                response.isSuccessful
+            } catch (e: Exception) {
+                Timber.d("Jellyseerr server verification failed for $url: ${e.message}")
+                false
+            }
+        }
+    }
+
     override suspend fun setActiveJellyfinSession(serverId: String, userId: UUID) {
         Timber.d("Switching Jellyseerr context to Server: $serverId, User: $userId")
         _isAuthenticated.value = false
@@ -89,7 +146,33 @@ constructor(
         val hasAuth = securePreferencesRepository.switchJellyseerrContext(serverId, userId)
         val config = jellyseerrDao.getConfig(serverId, userId.toString())
 
-        _isAuthenticated.value = hasAuth && config?.isLoggedIn == true
+        if (hasAuth && config?.isLoggedIn == true) {
+            if (networkConnectivityMonitor.isCurrentlyConnected()) {
+                try {
+                    val result =
+                        addressResolver.resolveAddress(
+                            serverId,
+                            userId.toString(),
+                            config.serverUrl,
+                        )
+                    if (
+                        result is JellyseerrAddressResult.Success &&
+                            result.address != config.serverUrl
+                    ) {
+                        Timber.d(
+                            "Jellyseerr: Resolved to ${result.address} (config: ${config.serverUrl})"
+                        )
+                        securePreferencesRepository.updateCachedJellyseerrServerUrl(result.address)
+                    } else if (result is JellyseerrAddressResult.AllFailed) {
+                        Timber.w("Jellyseerr: All addresses failed: ${result.attemptedAddresses}")
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "Jellyseerr: Address resolution failed, using config URL")
+                }
+            }
+            _isAuthenticated.value = true
+        }
+
         Timber.d("Jellyseerr Context Switched. Authenticated: ${_isAuthenticated.value}")
     }
 
@@ -138,6 +221,48 @@ constructor(
                             cookie = cookies,
                             username = loginResponse.username ?: loginResponse.email ?: "User",
                         )
+                    }
+                    val existingConfig =
+                        jellyseerrDao.getConfig(currentServerId, currentUserId.toString())
+                    if (
+                        existingConfig != null &&
+                            existingConfig.serverUrl != serverUrl &&
+                            existingConfig.serverUrl.isNotBlank()
+                    ) {
+                        val oldExists =
+                            jellyseerrDao.getAddressByUrl(
+                                currentServerId,
+                                currentUserId.toString(),
+                                existingConfig.serverUrl,
+                            )
+                        if (oldExists == null) {
+                            jellyseerrDao.insertAddress(
+                                JellyseerrAddressEntity(
+                                    id = UUID.randomUUID(),
+                                    jellyfinServerId = currentServerId,
+                                    jellyfinUserId = currentUserId.toString(),
+                                    address = existingConfig.serverUrl,
+                                )
+                            )
+                        }
+                    }
+                    if (serverUrl.isNotBlank()) {
+                        val newExists =
+                            jellyseerrDao.getAddressByUrl(
+                                currentServerId,
+                                currentUserId.toString(),
+                                serverUrl,
+                            )
+                        if (newExists == null) {
+                            jellyseerrDao.insertAddress(
+                                JellyseerrAddressEntity(
+                                    id = UUID.randomUUID(),
+                                    jellyfinServerId = currentServerId,
+                                    jellyfinUserId = currentUserId.toString(),
+                                    address = serverUrl,
+                                )
+                            )
+                        }
                     }
 
                     jellyseerrDao.saveConfig(
@@ -262,6 +387,9 @@ constructor(
             !securePreferencesRepository.getJellyseerrServerUrl().isNullOrBlank()
         }
     }
+
+    override suspend fun getAllKnownAddresses(): List<String> =
+        withContext(Dispatchers.IO) { jellyseerrDao.getAllAddressStrings() }
 
     override suspend fun createRequest(
         mediaId: Int,

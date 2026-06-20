@@ -14,6 +14,7 @@ import androidx.work.workDataOf
 import com.makd.afinity.R
 import com.makd.afinity.data.database.entities.AfinitySourceDto
 import com.makd.afinity.data.database.entities.DownloadDto
+import com.makd.afinity.data.manager.DownloadSemaphoreManager
 import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.download.DownloadStatus
 import com.makd.afinity.data.models.extensions.toAfinityEpisode
@@ -28,16 +29,17 @@ import com.makd.afinity.data.models.media.AfinityPersonImage
 import com.makd.afinity.data.models.media.AfinitySource
 import com.makd.afinity.data.models.media.AfinitySourceType
 import com.makd.afinity.data.repository.DatabaseRepository
+import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.repository.download.JellyfinDownloadRepository
 import com.makd.afinity.data.repository.segments.SegmentsRepository
 import com.makd.afinity.di.DownloadClient
+import com.makd.afinity.util.parseDashlessUuid
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -62,7 +64,9 @@ constructor(
     private val databaseRepository: DatabaseRepository,
     private val downloadRepository: JellyfinDownloadRepository,
     private val segmentsRepository: SegmentsRepository,
-    @DownloadClient private val okHttpClient: OkHttpClient,
+    private val preferencesRepository: PreferencesRepository,
+    private val downloadSemaphoreManager: DownloadSemaphoreManager,
+    @param:DownloadClient private val okHttpClient: OkHttpClient,
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -74,7 +78,6 @@ constructor(
         const val KEY_FILE_PATH = "file_path"
         const val PROGRESS_KEY = "progress"
         const val BUFFER_SIZE = 8192
-        private val downloadMutex = Mutex()
     }
 
     override suspend fun doWork(): Result =
@@ -110,13 +113,17 @@ constructor(
             val itemName = inputData.getString(KEY_ITEM_NAME) ?: "Unknown"
             val itemType = inputData.getString(KEY_ITEM_TYPE) ?: "Unknown"
 
+            ensureNotificationChannel()
+
             try {
                 setForeground(createQueuedForegroundInfo(downloadId.hashCode(), itemName))
             } catch (e: Exception) {
                 Timber.e(e, "Failed to promote to foreground service")
             }
 
-            downloadMutex.withLock {
+            val maxDownloads = preferencesRepository.getMaxDownloads()
+            downloadSemaphoreManager.updatePermits(maxDownloads)
+            downloadSemaphoreManager.semaphore.withPermit {
                 try {
                     setForeground(createForegroundInfo(downloadId.hashCode(), itemName, 0, 0))
                 } catch (e: Exception) {
@@ -134,11 +141,8 @@ constructor(
 
                     val apiClient =
                         sessionManager.getOrRestoreApiClient(download.serverId)
-                            ?: return@withContext Result.failure(
-                                workDataOf(
-                                    "error" to
-                                        "Could not restore session for server ${download.serverId}"
-                                )
+                            ?: throw Exception(
+                                "Could not restore session for server ${download.serverId}"
                             )
 
                     databaseRepository.insertDownload(
@@ -179,43 +183,49 @@ constructor(
                         } catch (e: Exception) {
                             Timber.e(e, "Failed to fetch item details")
                             null
-                        }
-                            ?: return@withContext Result.failure(
-                                workDataOf("error" to "Item not found")
-                            )
+                        } ?: throw Exception("Item not found")
 
                     val item =
                         when (baseItemDto.type) {
                             BaseItemKind.MOVIE -> baseItemDto.toAfinityMovie(baseUrl)
                             BaseItemKind.EPISODE ->
                                 baseItemDto.toAfinityEpisode(baseUrl)
-                                    ?: return@withContext Result.failure(
-                                        workDataOf("error" to "Failed to convert episode")
-                                    )
+                                    ?: throw Exception("Failed to convert episode")
 
                             else ->
-                                return@withContext Result.failure(
-                                    workDataOf(
-                                        "error" to "Unsupported item type: ${baseItemDto.type}"
-                                    )
-                                )
+                                throw Exception("Unsupported item type: ${baseItemDto.type}")
                         }
 
                     val source =
                         item.sources.find { it.id == sourceId }
-                            ?: return@withContext Result.failure(
-                                workDataOf("error" to "Source not found")
-                            )
+                            ?: throw Exception("Source not found")
 
-                    val itemDir = downloadRepository.getItemDownloadDirectory(itemId)
-                    val mediaDir = File(itemDir, "media").also { it.mkdirs() }
+                    val itemDir = downloadRepository.getItemDownloadDirectory(download)
+                    val mediaDir = File(itemDir, "media")
+
+                    if (!mediaDir.exists() && !mediaDir.mkdirs()) {
+                        Timber.e("Failed to create download directory at ${mediaDir.absolutePath}")
+                        throw Exception(
+                            "Failed to create download directory. Check storage permissions."
+                        )
+                    }
 
                     val extension = source.container?.lowercase() ?: "mkv"
 
                     val outputFile = File(mediaDir, "$sourceId.$extension.download")
                     val finalFile = File(mediaDir, "$sourceId.$extension")
 
-                    val downloadUrl = apiClient.libraryApi.getDownloadUrl(itemId = itemId)
+                    // Each sourceId is actually an itemId corresponding to the specific version that was requested in the download dialog
+                    // Unfortunately, because the SDK expects a UUID, but UUID.fromString doesn't handle strings without dashes, we have
+                    // to do some special handling here to get a UUID to pass to getDownloadUrl
+                    val sourceUuid =
+                        try {
+                            parseDashlessUuid(sourceId)
+                        } catch (e: IllegalArgumentException) {
+                            throw Exception("Invalid source ID")
+                        }
+
+                    val downloadUrl = apiClient.libraryApi.getDownloadUrl(itemId = sourceUuid)
 
                     val existingFileSize = if (outputFile.exists()) outputFile.length() else 0L
 
@@ -226,7 +236,10 @@ constructor(
                     val requestBuilder =
                         Request.Builder()
                             .url(downloadUrl)
-                            .header("Authorization", "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"")
+                            .header(
+                                "Authorization",
+                                "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"",
+                            )
 
                     if (existingFileSize > 0) {
                         requestBuilder.header("Range", "bytes=$existingFileSize-")
@@ -330,8 +343,10 @@ constructor(
                         )
                     databaseRepository.insertDownload(updatedDownload)
 
-                    ensureItemInDatabase(apiClient, download.serverId, baseItemDto, userId)
-                    downloadImages(apiClient, download.serverId, itemId, itemType, userId)
+                    ensureItemInDatabase(apiClient, download.serverId, baseItemDto, userId, download.storageVolumeId)
+                    if (itemType.uppercase() == "MOVIE") {
+                        downloadPersonImages(apiClient, download.serverId, itemId, userId)
+                    }
                     downloadSegments(itemId)
                     createLocalSource(itemId, sourceId, source.name, finalFile, source.mediaStreams)
 
@@ -396,6 +411,7 @@ constructor(
         serverId: String,
         baseItemDto: BaseItemDto,
         userId: UUID,
+        volumeId: String,
     ) {
         try {
             Timber.d("Ensuring item ${baseItemDto.id} is saved to database")
@@ -466,13 +482,13 @@ constructor(
                         seriesId?.let {
                             seriesDeferred?.await()?.toAfinityShow(baseUrl)?.let { show ->
                                 databaseRepository.insertShow(show, serverId)
-                                downloadShowImages(apiClient, serverId, it, userId)
+                                downloadShowImages(apiClient, serverId, it, userId, volumeId)
                             }
                         }
 
                         seasonDeferred?.await()?.toAfinitySeason(baseUrl)?.let { season ->
                             databaseRepository.insertSeason(season, serverId)
-                            downloadSeasonImages(apiClient, serverId, seasonId, userId)
+                            downloadSeasonImages(apiClient, serverId, seasonId, userId, volumeId)
                         }
                     }
 
@@ -502,7 +518,11 @@ constructor(
                 } ?: return
 
             val itemDir = downloadRepository.getItemDownloadDirectory(itemId)
-            val imagesDir = File(itemDir, "images").also { it.mkdirs() }
+            val imagesDir = File(itemDir, "images")
+            if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+                Timber.w("Failed to create images directory for item $itemId")
+                return
+            }
             val images = item.images
             val downloadedImages = mutableMapOf<String, Uri?>()
 
@@ -563,11 +583,16 @@ constructor(
         serverId: String,
         showId: UUID,
         userId: UUID,
+        volumeId: String,
     ) {
         try {
             val show = databaseRepository.getShow(showId, userId) ?: return
-            val showDir = downloadRepository.getShowDirectory(serverId, showId)
-            val imagesDir = File(showDir, "images").also { it.mkdirs() }
+            val showDir = downloadRepository.getShowDirectory(serverId, showId, volumeId)
+            val imagesDir = File(showDir, "images")
+            if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+                Timber.w("Failed to create show images directory for show $showId")
+                return
+            }
             val images = show.images
             val downloadedImages = mutableMapOf<String, Uri?>()
 
@@ -603,12 +628,17 @@ constructor(
         serverId: String,
         seasonId: UUID,
         userId: UUID,
+        volumeId: String,
     ) {
         try {
             val season = databaseRepository.getSeason(seasonId, userId) ?: return
             val seasonDir =
-                downloadRepository.getSeasonDirectory(serverId, season.seriesId, season.indexNumber)
-            val imagesDir = File(seasonDir, "images").also { it.mkdirs() }
+                downloadRepository.getSeasonDirectory(serverId, season.seriesId, season.indexNumber, volumeId)
+            val imagesDir = File(seasonDir, "images")
+            if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+                Timber.w("Failed to create season images directory for season $seasonId")
+                return
+            }
             val images = season.images
             val downloadedImages = mutableMapOf<String, Uri?>()
 
@@ -649,7 +679,11 @@ constructor(
             if (movie.people.isEmpty()) return
 
             val movieDir = downloadRepository.getItemDownloadDirectory(itemId)
-            val peopleImagesDir = File(movieDir, "people").also { it.mkdirs() }
+            val peopleImagesDir = File(movieDir, "people")
+            if (!peopleImagesDir.exists() && !peopleImagesDir.mkdirs()) {
+                Timber.w("Failed to create people images directory for item $itemId")
+                return
+            }
 
             val updatedPeople =
                 movie.people.map { person ->
@@ -774,15 +808,19 @@ constructor(
         }
     }
 
-    private fun createQueuedForegroundInfo(notificationId: Int, itemName: String): ForegroundInfo {
+    private fun ensureNotificationChannel() {
         val channelId = "download_channel"
-        val context: Context = applicationContext
         val channel =
             NotificationChannel(channelId, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Background download tasks"
             }
-        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+        (applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .createNotificationChannel(channel)
+    }
+
+    private fun createQueuedForegroundInfo(notificationId: Int, itemName: String): ForegroundInfo {
+        val channelId = "download_channel"
+        val context: Context = applicationContext
         val notification =
             NotificationCompat.Builder(context, channelId)
                 .setContentTitle(itemName)
@@ -807,12 +845,6 @@ constructor(
         val context: Context = applicationContext
         val channelId = "download_channel"
         val title = "Downloading $itemName"
-        val channel =
-            NotificationChannel(channelId, "Downloads", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Background download tasks"
-            }
-        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-            .createNotificationChannel(channel)
 
         val progressText =
             if (totalBytes > 0) {

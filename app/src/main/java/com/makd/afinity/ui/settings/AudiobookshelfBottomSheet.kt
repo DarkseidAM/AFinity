@@ -184,7 +184,7 @@ fun AudiobookshelfBottomSheet(
                 value = uiState.serverUrl,
                 onValueChange = viewModel::updateServerUrl,
                 label = { Text(stringResource(R.string.label_server_url)) },
-                placeholder = { Text("https://abs.example.com") },
+                placeholder = { Text(stringResource(R.string.abs_server_url_placeholder)) },
                 leadingIcon = {
                     Icon(
                         painterResource(id = R.drawable.ic_link_rotated),
@@ -316,7 +316,10 @@ fun AudiobookshelfBottomSheet(
             Spacer(modifier = Modifier.height(8.dp))
 
             Button(
-                onClick = viewModel::login,
+                onClick = {
+                    focusManager.clearFocus()
+                    viewModel.login()
+                },
                 enabled =
                     !uiState.isLoggingIn &&
                         uiState.serverUrl.isNotBlank() &&

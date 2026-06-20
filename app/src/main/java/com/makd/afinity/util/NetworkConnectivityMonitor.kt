@@ -6,22 +6,51 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
 
 @Singleton
 class NetworkConnectivityMonitor
 @Inject
-constructor(@ApplicationContext private val context: Context) {
+constructor(@param:ApplicationContext private val context: Context) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    val isNetworkAvailable: Flow<Boolean> =
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    private val _networkSwitchEvents =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    val networkSwitchEvents: SharedFlow<Unit> = _networkSwitchEvents.asSharedFlow()
+
+    private val _networkDropEvents =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+    val networkDropEvents: SharedFlow<Unit> = _networkDropEvents.asSharedFlow()
+
+    val isNetworkAvailable: StateFlow<Boolean> =
         callbackFlow {
                 val callback =
                     object : ConnectivityManager.NetworkCallback() {
@@ -30,6 +59,7 @@ constructor(@ApplicationContext private val context: Context) {
                         override fun onAvailable(network: Network) {
                             networks.add(network)
                             trySend(true)
+                            scope.launch { _networkSwitchEvents.emit(Unit) }
                             Timber.d(
                                 "Network available: $network, Total networks: ${networks.size}"
                             )
@@ -38,8 +68,12 @@ constructor(@ApplicationContext private val context: Context) {
                         override fun onLost(network: Network) {
                             networks.remove(network)
                             trySend(networks.isNotEmpty())
+                            scope.launch { _networkDropEvents.emit(Unit) }
                             Timber.d("Network lost: $network, Remaining networks: ${networks.size}")
                         }
+
+                        private var lastInternetState: Boolean? = null
+                        private var lastValidatedState: Boolean? = null
 
                         override fun onCapabilitiesChanged(
                             network: Network,
@@ -53,9 +87,16 @@ constructor(@ApplicationContext private val context: Context) {
                                 networkCapabilities.hasCapability(
                                     NetworkCapabilities.NET_CAPABILITY_VALIDATED
                                 )
-                            Timber.d(
-                                "Network capabilities changed: hasInternet=$hasInternet, isValidated=$isValidated"
-                            )
+                            if (
+                                hasInternet != lastInternetState ||
+                                    isValidated != lastValidatedState
+                            ) {
+                                Timber.d(
+                                    "Network capabilities changed: hasInternet=$hasInternet, isValidated=$isValidated"
+                                )
+                                lastInternetState = hasInternet
+                                lastValidatedState = isValidated
+                            }
                         }
                     }
 
@@ -66,7 +107,6 @@ constructor(@ApplicationContext private val context: Context) {
                         .build()
 
                 connectivityManager.registerNetworkCallback(networkRequest, callback)
-
                 trySend(isCurrentlyConnected())
 
                 awaitClose {
@@ -75,12 +115,31 @@ constructor(@ApplicationContext private val context: Context) {
                 }
             }
             .distinctUntilChanged()
+            .stateIn(
+                scope = scope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = isCurrentlyConnected(),
+            )
 
     fun isCurrentlyConnected(): Boolean {
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
+
+    fun isOnWifi(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    val isOnWifiFlow: StateFlow<Boolean> =
+        isNetworkAvailable
+            .map { isOnWifi() }
+            .stateIn(
+                scope = scope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = isOnWifi(),
+            )
 }

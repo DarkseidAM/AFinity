@@ -16,8 +16,8 @@ import com.makd.afinity.data.database.entities.AfinityTrickplayInfoDto
 import com.makd.afinity.data.database.entities.DownloadDto
 import com.makd.afinity.data.models.download.DownloadStatus
 import com.makd.afinity.data.models.user.AfinityUserDataDto
-import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import java.util.UUID
 
 @Dao
 abstract class ServerDatabaseDao {
@@ -90,6 +90,7 @@ abstract class ServerDatabaseDao {
                     played = false,
                     favorite = false,
                     playbackPositionTicks = 0L,
+                    likes = false,
                 )
                 .also { insertUserData(it) }
     }
@@ -163,6 +164,16 @@ abstract class ServerDatabaseDao {
     @Query("SELECT COALESCE(SUM(totalBytes), 0) FROM downloads WHERE status = 'COMPLETED'")
     abstract suspend fun getTotalBytesAllServers(): Long
 
+    @Query(
+        "SELECT storageVolumeId, COALESCE(SUM(totalBytes), 0) AS totalBytes FROM downloads WHERE serverId = :serverId AND status = 'COMPLETED' GROUP BY storageVolumeId"
+    )
+    abstract suspend fun getTotalBytesPerVolumeForServer(serverId: String): List<VolumeUsage>
+
+    @Query(
+        "SELECT storageVolumeId, COALESCE(SUM(totalBytes), 0) AS totalBytes FROM downloads WHERE status = 'COMPLETED' GROUP BY storageVolumeId"
+    )
+    abstract suspend fun getTotalBytesPerVolume(): List<VolumeUsage>
+
     @Query("UPDATE downloads SET serverId = :serverId, userId = :userId WHERE serverId = ''")
     abstract suspend fun backfillEmptyServerIds(serverId: String, userId: UUID)
 
@@ -188,8 +199,97 @@ abstract class ServerDatabaseDao {
     @Query("DELETE FROM shows WHERE serverId = :serverId")
     abstract suspend fun deleteShowsByServerId(serverId: String)
 
+    @Query("DELETE FROM seasons WHERE serverId = :serverId")
+    abstract suspend fun deleteSeasonsByServerId(serverId: String)
+
     @Query("DELETE FROM episodes WHERE serverId = :serverId")
     abstract suspend fun deleteEpisodesByServerId(serverId: String)
+
+    @Query("DELETE FROM userdata WHERE serverId = :serverId")
+    abstract suspend fun deleteUserDataByServerId(serverId: String)
+
+    @Query("DELETE FROM downloads WHERE serverId = :serverId")
+    abstract suspend fun deleteDownloadsByServerId(serverId: String)
+
+    @Query(
+        "DELETE FROM sources WHERE itemId NOT IN (SELECT id FROM movies UNION ALL SELECT id FROM shows UNION ALL SELECT id FROM episodes)"
+    )
+    abstract suspend fun deleteOrphanedSources()
+
+    @Query("DELETE FROM mediastreams WHERE sourceId NOT IN (SELECT id FROM sources)")
+    abstract suspend fun deleteOrphanedMediaStreams()
+
+    @Query("DELETE FROM genre_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteGenreCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM genre_movie_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteGenreMovieCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM show_genre_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteShowGenreCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM genre_show_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteGenreShowCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM studio_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteStudioCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM library_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteLibraryCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM movie_section_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteMovieSectionCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM boxset_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteBoxSetCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM boxset_cache_metadata WHERE serverId = :serverId")
+    abstract suspend fun deleteBoxSetCacheMetadataByServerId(serverId: String)
+
+    @Query("DELETE FROM top_people_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteTopPeopleCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM person_section_cache WHERE serverId = :serverId")
+    abstract suspend fun deletePersonSectionCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM item_metadata_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteItemMetadataCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM jellyfin_stats_cache WHERE serverId = :serverId")
+    abstract suspend fun deleteJellyfinStatsCacheByServerId(serverId: String)
+
+    @Query("DELETE FROM jellyseerr_requests WHERE jellyfinServerId = :serverId")
+    abstract suspend fun deleteJellyseerrRequestsByServerId(serverId: String)
+
+    @Query("DELETE FROM jellyseerr_config WHERE jellyfinServerId = :serverId")
+    abstract suspend fun deleteJellyseerrConfigByServerId(serverId: String)
+
+    @Transaction
+    open suspend fun clearAllDataForServer(serverId: String) {
+        deleteMoviesByServerId(serverId)
+        deleteShowsByServerId(serverId)
+        deleteSeasonsByServerId(serverId)
+        deleteEpisodesByServerId(serverId)
+        deleteUserDataByServerId(serverId)
+        deleteDownloadsByServerId(serverId)
+        deleteOrphanedSources()
+        deleteOrphanedMediaStreams()
+        deleteGenreCacheByServerId(serverId)
+        deleteGenreMovieCacheByServerId(serverId)
+        deleteShowGenreCacheByServerId(serverId)
+        deleteGenreShowCacheByServerId(serverId)
+        deleteStudioCacheByServerId(serverId)
+        deleteLibraryCacheByServerId(serverId)
+        deleteMovieSectionCacheByServerId(serverId)
+        deleteBoxSetCacheByServerId(serverId)
+        deleteBoxSetCacheMetadataByServerId(serverId)
+        deleteTopPeopleCacheByServerId(serverId)
+        deletePersonSectionCacheByServerId(serverId)
+        deleteItemMetadataCacheByServerId(serverId)
+        deleteJellyfinStatsCacheByServerId(serverId)
+        deleteJellyseerrRequestsByServerId(serverId)
+        deleteJellyseerrConfigByServerId(serverId)
+    }
 
     @Query(
         """

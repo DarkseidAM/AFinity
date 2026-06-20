@@ -4,6 +4,7 @@ import android.app.LocaleConfig
 import android.app.LocaleManager
 import android.os.LocaleList
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +26,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -32,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -54,22 +60,45 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.makd.afinity.R
 import com.makd.afinity.core.AppConstants
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AsyncImage
+import com.makd.afinity.ui.components.ConnectionType
+import com.makd.afinity.ui.settings.servers.ControlPanelView
+import com.makd.afinity.ui.settings.servers.ControlPanelViewModel
 import com.makd.afinity.ui.settings.update.UpdateSection
+import com.makd.afinity.util.isLocalAddress
+import com.makd.afinity.util.isTailscaleAddress
 import timber.log.Timber
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,10 +116,19 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val combineLibrarySections by viewModel.combineLibrarySections.collectAsStateWithLifecycle()
-    val homeSortByDateAdded by viewModel.homeSortByDateAdded.collectAsStateWithLifecycle()
-    val manualOfflineMode by viewModel.manualOfflineMode.collectAsStateWithLifecycle()
     val effectiveOfflineMode by viewModel.effectiveOfflineMode.collectAsStateWithLifecycle()
+    val connectionType =
+        remember(effectiveOfflineMode, uiState.serverUrl) {
+            when {
+                effectiveOfflineMode -> ConnectionType.OFFLINE
+                uiState.serverUrl != null && isLocalAddress(uiState.serverUrl!!) ->
+                    ConnectionType.LOCAL
+                uiState.serverUrl != null && isTailscaleAddress(uiState.serverUrl!!) ->
+                    ConnectionType.TAILSCALE
+                else -> ConnectionType.REMOTE
+            }
+        }
+    val manualOfflineMode by viewModel.manualOfflineMode.collectAsStateWithLifecycle()
     val isNetworkAvailable by viewModel.isNetworkAvailable.collectAsStateWithLifecycle()
     val isJellyseerrAuthenticated by
         viewModel.isJellyseerrAuthenticated.collectAsStateWithLifecycle()
@@ -112,12 +150,21 @@ fun SettingsScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showJellyseerrLogoutDialog by remember { mutableStateOf(false) }
     var showAudiobookshelfLogoutDialog by remember { mutableStateOf(false) }
+    var showQuickConnectDialog by remember { mutableStateOf(false) }
     var showJellyseerrBottomSheet by remember { mutableStateOf(false) }
     var showAudiobookshelfBottomSheet by remember { mutableStateOf(false) }
     var showSessionSwitcherSheet by remember { mutableStateOf(false) }
+    var showControlPanel by remember { mutableStateOf(false) }
     val jellyseerrSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val audiobookshelfSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val sessionSwitcherSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val playerOffset = LocalPlayerOffset.current
+    val controlPanelViewModel: ControlPanelViewModel = hiltViewModel(key = "settings_control_panel")
+    val isAdmin by controlPanelViewModel.isAdmin.collectAsStateWithLifecycle()
+
+    LaunchedEffect(uiState.serverId) {
+        uiState.serverId?.let { controlPanelViewModel.initialize(it) }
+    }
 
     if (showLogoutDialog) {
         LogoutConfirmationDialog(
@@ -153,6 +200,19 @@ fun SettingsScreen(
         LanguagePickerDialog(onDismiss = { showLanguageDialog = false })
     }
 
+    if (showQuickConnectDialog) {
+        AuthorizeQuickConnectDialog(
+            isAuthorizing = uiState.isAuthorizingQuickConnect,
+            isSuccess = uiState.quickConnectAuthSuccess,
+            errorMessage = uiState.quickConnectAuthError,
+            onAuthorize = { code -> viewModel.authorizeQuickConnect(code) },
+            onDismiss = {
+                showQuickConnectDialog = false
+                viewModel.clearQuickConnectAuthState()
+            },
+        )
+    }
+
     if (showJellyseerrBottomSheet) {
         JellyseerrBottomSheet(
             onDismiss = { showJellyseerrBottomSheet = false },
@@ -176,6 +236,35 @@ fun SettingsScreen(
             },
             sheetState = sessionSwitcherSheetState,
         )
+    }
+
+    if (showControlPanel) {
+        Dialog(
+            onDismissRequest = { showControlPanel = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(750.dp).padding(16.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+            ) {
+                uiState.activeServer?.let { activeServer ->
+                    ControlPanelView(
+                        serverWithCount = activeServer,
+                        onBack = { showControlPanel = false },
+                        viewModel = controlPanelViewModel,
+                    )
+                }
+                    ?: run {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+            }
+        }
     }
 
     uiState.error?.let { error ->
@@ -221,17 +310,31 @@ fun SettingsScreen(
         },
         containerColor = MaterialTheme.colorScheme.surface,
     ) { innerPadding ->
+        val layoutDirection = LocalLayoutDirection.current
+        val customPadding =
+            PaddingValues(
+                top = innerPadding.calculateTopPadding(),
+                start = innerPadding.calculateStartPadding(layoutDirection),
+                end = innerPadding.calculateEndPadding(layoutDirection),
+                bottom = max(innerPadding.calculateBottomPadding(), playerOffset),
+            )
         if (uiState.isLoading) {
             Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                modifier = Modifier.fillMaxSize().padding(customPadding),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator()
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentPadding = PaddingValues(vertical = 16.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding =
+                    PaddingValues(
+                        top = customPadding.calculateTopPadding() + 16.dp,
+                        start = customPadding.calculateStartPadding(layoutDirection),
+                        end = customPadding.calculateEndPadding(layoutDirection),
+                        bottom = customPadding.calculateBottomPadding() + 16.dp,
+                    ),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 item(key = "profile") {
@@ -241,7 +344,10 @@ fun SettingsScreen(
                         serverName = uiState.serverName,
                         serverUrl = uiState.serverUrl,
                         userProfileImageUrl = uiState.userProfileImageUrl,
+                        connectionType = connectionType,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        isAdmin = isAdmin == true,
+                        onControlPanelClick = { showControlPanel = true },
                     )
                 }
 
@@ -273,6 +379,7 @@ fun SettingsScreen(
                                 if (enabled) showJellyseerrBottomSheet = true
                                 else showJellyseerrLogoutDialog = true
                             },
+                            enabled = !effectiveOfflineMode,
                         )
                         SettingsDivider()
                         SettingsSwitchItem(
@@ -287,6 +394,7 @@ fun SettingsScreen(
                                 if (enabled) showAudiobookshelfBottomSheet = true
                                 else showAudiobookshelfLogoutDialog = true
                             },
+                            enabled = !effectiveOfflineMode,
                         )
                         SettingsDivider()
                         SettingsItem(
@@ -300,7 +408,20 @@ fun SettingsScreen(
                             icon = painterResource(id = R.drawable.ic_user),
                             title = stringResource(R.string.pref_switch_session),
                             subtitle = stringResource(R.string.pref_switch_session_summary),
-                            onClick = { showSessionSwitcherSheet = true },
+                            onClick =
+                                if (!effectiveOfflineMode) {
+                                    { showSessionSwitcherSheet = true }
+                                } else null,
+                        )
+                        SettingsDivider()
+                        SettingsItem(
+                            icon = painterResource(id = R.drawable.ic_quickconnect),
+                            title = stringResource(R.string.pref_authorize_quickconnect),
+                            subtitle = stringResource(R.string.pref_authorize_quickconnect_summary),
+                            onClick =
+                                if (!effectiveOfflineMode) {
+                                    { showQuickConnectDialog = true }
+                                } else null,
                         )
                     }
                 }
@@ -365,6 +486,23 @@ fun SettingsScreen(
                             title = stringResource(R.string.pref_licenses),
                             subtitle = stringResource(R.string.pref_licenses_summary),
                             onClick = onLicensesClick,
+                        )
+                        SettingsDivider()
+                        SettingsItem(
+                            icon = painterResource(id = R.drawable.ic_logs),
+                            title = stringResource(R.string.pref_send_logs),
+                            subtitle = stringResource(R.string.pref_send_logs_summary),
+                            onClick =
+                                if (uiState.isExportingLogs) null else ({ viewModel.exportLogs() }),
+                            trailing =
+                                if (uiState.isExportingLogs)
+                                    ({
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(20.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                    })
+                                else null,
                         )
                     }
                 }
@@ -456,33 +594,77 @@ fun ProfileHeader(
     serverName: String?,
     serverUrl: String?,
     userProfileImageUrl: String?,
+    connectionType: ConnectionType,
     modifier: Modifier = Modifier,
+    isAdmin: Boolean = false,
+    onControlPanelClick: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth().padding(top = 24.dp, bottom = 0.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            modifier =
-                Modifier.size(96.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (userProfileImageUrl != null) {
-                AsyncImage(
-                    imageUrl = userProfileImageUrl,
-                    contentDescription = stringResource(R.string.cd_profile_picture),
-                    targetWidth = 96.dp,
-                    targetHeight = 96.dp,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Text(
-                    text = userName.take(1).uppercase(),
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Box(modifier = Modifier.size(96.dp)) {
+            Box(
+                modifier =
+                    Modifier.fillMaxSize()
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (userProfileImageUrl != null) {
+                    AsyncImage(
+                        imageUrl = userProfileImageUrl,
+                        contentDescription = stringResource(R.string.cd_profile_picture),
+                        targetWidth = 96.dp,
+                        targetHeight = 96.dp,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = userName.take(1).uppercase(),
+                        style = MaterialTheme.typography.displayMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            val indicatorColor =
+                when (connectionType) {
+                    ConnectionType.LOCAL -> Color(0xFF4CAF50)
+                    ConnectionType.TAILSCALE -> Color(0xFF2196F3)
+                    ConnectionType.REMOTE -> Color(0xFFFF9800)
+                    ConnectionType.OFFLINE -> MaterialTheme.colorScheme.error
+                }
+            val indicatorIcon =
+                when (connectionType) {
+                    ConnectionType.LOCAL -> R.drawable.ic_wifi
+                    ConnectionType.TAILSCALE -> R.drawable.ic_security
+                    ConnectionType.REMOTE -> R.drawable.ic_link
+                    ConnectionType.OFFLINE -> R.drawable.ic_cloud_off
+                }
+            val indicatorContentDescription =
+                when (connectionType) {
+                    ConnectionType.LOCAL -> stringResource(R.string.cd_local_connection)
+                    ConnectionType.TAILSCALE -> stringResource(R.string.cd_tailscale_connection)
+                    ConnectionType.REMOTE -> stringResource(R.string.cd_remote_connection)
+                    ConnectionType.OFFLINE -> stringResource(R.string.cd_offline_mode)
+                }
+
+            Box(
+                modifier =
+                    Modifier.align(Alignment.BottomEnd)
+                        .size(28.dp)
+                        .background(color = MaterialTheme.colorScheme.surface, shape = CircleShape)
+                        .padding(3.dp)
+                        .background(color = indicatorColor, shape = CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(id = indicatorIcon),
+                    contentDescription = indicatorContentDescription,
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp),
                 )
             }
         }
@@ -495,34 +677,58 @@ fun ProfileHeader(
         )
 
         Spacer(modifier = Modifier.height(8.dp))
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            shape = RoundedCornerShape(50),
-            modifier = Modifier.height(32.dp),
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.height(32.dp),
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_server),
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    text = serverName ?: stringResource(R.string.unknown_server),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                if (serverUrl != null) {
-                    VerticalDivider(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_server),
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                     Text(
-                        text = serverUrl,
+                        text = serverName ?: stringResource(R.string.unknown_server),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                    if (serverUrl != null) {
+                        VerticalDivider(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = serverUrl,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            if (isAdmin && onControlPanelClick != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(50),
+                    modifier =
+                        Modifier.size(32.dp).clip(RoundedCornerShape(50)).clickable {
+                            onControlPanelClick()
+                        },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_admin_panel_settings),
+                            contentDescription = "Control Panel",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
         }
@@ -786,6 +992,172 @@ private fun LanguagePickerDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    )
+}
+
+@Composable
+private fun AuthorizeQuickConnectDialog(
+    isAuthorizing: Boolean,
+    isSuccess: Boolean,
+    errorMessage: String?,
+    onAuthorize: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val digits = remember { Array(6) { mutableStateOf("") } }
+    val focusRequesters = remember { Array(6) { FocusRequester() } }
+    val code = digits.joinToString("") { it.value }
+
+    LaunchedEffect(isSuccess) {
+        if (isSuccess) kotlinx.coroutines.delay(1200)
+        if (isSuccess) onDismiss()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_security),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        },
+        title = {
+            Text(
+                stringResource(R.string.dialog_quickconnect_title),
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            )
+        },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.dialog_quickconnect_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    digits.forEachIndexed { index, digitState ->
+                        val isFocused = remember { mutableStateOf(false) }
+                        BasicTextField(
+                            value = digitState.value,
+                            onValueChange = { input ->
+                                val filtered = input.filter { it.isDigit() }
+                                if (filtered.isEmpty()) {
+                                    digitState.value = ""
+                                } else {
+                                    digitState.value = filtered.takeLast(1)
+                                    if (index < 5) focusRequesters[index + 1].requestFocus()
+                                }
+                            },
+                            modifier =
+                                Modifier.size(42.dp)
+                                    .focusRequester(focusRequesters[index])
+                                    .onKeyEvent { event ->
+                                        if (
+                                            event.type == KeyEventType.KeyDown &&
+                                                event.key == Key.Backspace &&
+                                                digitState.value.isEmpty() &&
+                                                index > 0
+                                        ) {
+                                            focusRequesters[index - 1].requestFocus()
+                                            digits[index - 1].value = ""
+                                            true
+                                        } else false
+                                    },
+                            keyboardOptions =
+                                KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = if (index == 5) ImeAction.Done else ImeAction.Next,
+                                ),
+                            enabled = !isAuthorizing && !isSuccess,
+                            singleLine = true,
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            textStyle =
+                                LocalTextStyle.current.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                ),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier =
+                                        Modifier.fillMaxSize()
+                                            .background(
+                                                color =
+                                                    MaterialTheme.colorScheme
+                                                        .surfaceContainerHighest,
+                                                shape = RoundedCornerShape(10.dp),
+                                            )
+                                            .border(
+                                                width =
+                                                    if (digitState.value.isNotEmpty()) 2.dp
+                                                    else 1.dp,
+                                                color =
+                                                    when {
+                                                        isSuccess -> Color(0xFF4CAF50)
+                                                        errorMessage != null ->
+                                                            MaterialTheme.colorScheme.error
+                                                        digitState.value.isNotEmpty() ->
+                                                            MaterialTheme.colorScheme.primary
+                                                        else ->
+                                                            MaterialTheme.colorScheme.outline.copy(
+                                                                alpha = 0.4f
+                                                            )
+                                                    },
+                                                shape = RoundedCornerShape(10.dp),
+                                            ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    innerTextField()
+                                }
+                            },
+                        )
+                    }
+                }
+                when {
+                    isSuccess ->
+                        Text(
+                            text = stringResource(R.string.dialog_quickconnect_authorized),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF4CAF50),
+                        )
+                    errorMessage != null ->
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    else -> Spacer(modifier = Modifier.height(0.dp))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onAuthorize(code) },
+                enabled = code.length == 6 && !isAuthorizing && !isSuccess,
+            ) {
+                if (isAuthorizing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                    )
+                } else {
+                    Text(stringResource(R.string.action_authorize))
+                }
+            }
+        },
+        dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
         shape = RoundedCornerShape(28.dp),

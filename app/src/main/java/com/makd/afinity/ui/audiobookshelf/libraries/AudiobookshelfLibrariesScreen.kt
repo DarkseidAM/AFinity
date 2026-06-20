@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -51,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,8 +59,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.makd.afinity.R
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.audiobookshelf.libraries.components.AudiobookCard
 import com.makd.afinity.ui.components.AfinityTopAppBar
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.main.MainUiState
 import com.makd.afinity.ui.settings.AudiobookshelfBottomSheet
 import kotlinx.coroutines.launch
@@ -111,6 +113,7 @@ fun AudiobookshelfLibrariesScreen(
                     onSearchClick = { navController.navigate(Destination.createSearchRoute()) },
                     onProfileClick = { navController.navigate(Destination.createSettingsRoute()) },
                     userProfileImageUrl = mainUiState.userProfileImageUrl,
+                    userName = mainUiState.userName,
                 )
             }
         ) { paddingValues ->
@@ -120,11 +123,13 @@ fun AudiobookshelfLibrariesScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = "Connect to Audiobookshelf",
+                        text = stringResource(R.string.abs_connect_title),
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Spacer(modifier = Modifier.size(12.dp))
-                    Button(onClick = { showLoginSheet = true }) { Text("Connect") }
+                    Button(onClick = { showLoginSheet = true }) {
+                        Text(stringResource(R.string.abs_connect_button))
+                    }
                 }
             }
         }
@@ -160,17 +165,19 @@ fun AudiobookshelfLibrariesScreen(
                 onSearchClick = { navController.navigate(Destination.createSearchRoute()) },
                 onProfileClick = { navController.navigate(Destination.createSettingsRoute()) },
                 userProfileImageUrl = mainUiState.userProfileImageUrl,
+                userName = mainUiState.userName,
             )
         }
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             if (libraries.isEmpty() && uiState.isRefreshing) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                FullScreenLoading()
             } else if (libraries.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(text = "No libraries found", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = stringResource(R.string.abs_no_libraries_found),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -182,7 +189,7 @@ fun AudiobookshelfLibrariesScreen(
                         item {
                             NavigationChip(
                                 selected = pagerState.currentPage == 0,
-                                label = "Home",
+                                label = stringResource(R.string.abs_tab_home),
                                 iconResId = R.drawable.ic_book_series,
                                 onClick = {
                                     coroutineScope.launch { pagerState.animateScrollToPage(0) }
@@ -192,7 +199,7 @@ fun AudiobookshelfLibrariesScreen(
                         item {
                             NavigationChip(
                                 selected = pagerState.currentPage == 1,
-                                label = "Series",
+                                label = stringResource(R.string.abs_tab_series),
                                 iconResId = R.drawable.ic_collection,
                                 onClick = {
                                     coroutineScope.launch { pagerState.animateScrollToPage(1) }
@@ -229,7 +236,7 @@ fun AudiobookshelfLibrariesScreen(
                                     sections = personalizedSections,
                                     serverUrl = config?.serverUrl,
                                     onItemClick = { item -> onNavigateToItem(item.id) },
-                                    isLoading = uiState.isRefreshing,
+                                    isLoading = uiState.isRefreshing && personalizedSections.isEmpty(),
                                     widthSizeClass = widthSizeClass,
                                 )
                             }
@@ -255,13 +262,9 @@ fun AudiobookshelfLibrariesScreen(
                                         else allItems
 
                                     if (displayItems == null) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            CircularProgressIndicator()
-                                        }
+                                        FullScreenLoading()
                                     } else {
+                                        val playerOffset = LocalPlayerOffset.current
                                         Row(modifier = Modifier.fillMaxSize()) {
                                             if (displayItems.isEmpty()) {
                                                 Box(
@@ -269,7 +272,7 @@ fun AudiobookshelfLibrariesScreen(
                                                     contentAlignment = Alignment.Center,
                                                 ) {
                                                     Text(
-                                                        text = "No items in library",
+                                                        text = stringResource(R.string.abs_no_items_in_library),
                                                         style = MaterialTheme.typography.bodyMedium,
                                                         color =
                                                             MaterialTheme.colorScheme
@@ -280,7 +283,7 @@ fun AudiobookshelfLibrariesScreen(
                                                 LazyVerticalGrid(
                                                     columns = GridCells.Adaptive(minSize = 140.dp),
                                                     modifier = Modifier.weight(1f).fillMaxHeight(),
-                                                    contentPadding = PaddingValues(16.dp),
+                                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp + playerOffset),
                                                     horizontalArrangement =
                                                         Arrangement.spacedBy(12.dp),
                                                     verticalArrangement =

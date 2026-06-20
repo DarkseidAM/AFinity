@@ -3,14 +3,17 @@ package com.makd.afinity.navigation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.makd.afinity.data.manager.OfflineModeManager
+import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinityShow
 import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.AudiobookshelfRepository
 import com.makd.afinity.data.repository.JellyfinRepository
 import com.makd.afinity.data.repository.JellyseerrRepository
+import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.repository.auth.AuthRepository
 import com.makd.afinity.data.repository.livetv.LiveTvRepository
+import com.makd.afinity.data.repository.media.MediaRepository
 import com.makd.afinity.data.repository.watchlist.WatchlistRepository
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfPlaybackManager
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfPlayer
@@ -31,6 +34,7 @@ constructor(
     private val appDataRepository: AppDataRepository,
     private val authRepository: AuthRepository,
     private val jellyfinRepository: JellyfinRepository,
+    private val mediaRepository: MediaRepository,
     val watchlistRepository: WatchlistRepository,
     val jellyseerrRepository: JellyseerrRepository,
     val audiobookshelfRepository: AudiobookshelfRepository,
@@ -38,9 +42,18 @@ constructor(
     val audiobookshelfPlaybackManager: AudiobookshelfPlaybackManager,
     private val liveTvRepository: LiveTvRepository,
     private val offlineModeManager: OfflineModeManager,
+    private val sessionManager: SessionManager,
+    private val preferencesRepository: PreferencesRepository,
 ) : ViewModel() {
     private val _hasLiveTvAccess = MutableStateFlow(true)
     val hasLiveTvAccess = _hasLiveTvAccess.asStateFlow()
+
+    val showRatings =
+        preferencesRepository.getShowRatingsFlow().stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = true,
+        )
 
     val appLoadingState =
         combine(
@@ -59,6 +72,13 @@ constructor(
                 started = SharingStarted.WhileSubscribed(5000),
                 initialValue = AppLoadingState(isLoading = true),
             )
+
+    val favoritesCount =
+        appDataRepository.favoritesCountFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 0,
+        )
 
     init {
         observeAuthAndLoadData()
@@ -117,8 +137,10 @@ constructor(
         viewModelScope.launch {
             try {
                 val isOffline = offlineModeManager.isCurrentlyOffline()
-                if (isOffline) {
-                    Timber.d("Device is offline, skipping server info refresh")
+                if (isOffline || !sessionManager.isServerReachable.value) {
+                    Timber.d(
+                        "Device is offline or server unreachable, skipping server info refresh"
+                    )
                     return@launch
                 }
 
@@ -137,6 +159,14 @@ constructor(
 
                 if (isOffline) {
                     Timber.d("Device is offline, skipping initial data load")
+                    appDataRepository.skipInitialDataLoad()
+                    return@launch
+                }
+
+                if (!sessionManager.isServerReachable.value) {
+                    Timber.d(
+                        "Server unreachable (address resolution failed), starting in offline mode"
+                    )
                     appDataRepository.skipInitialDataLoad()
                     return@launch
                 }
@@ -177,7 +207,7 @@ constructor(
     suspend fun resolvePlayableItem(item: AfinityItem): AfinityItem? {
         return try {
             if (item is AfinityShow) {
-                val episode = jellyfinRepository.getEpisodeToPlay(item.id)
+                val episode = mediaRepository.getEpisodeToPlay(item.id)
                 if (episode == null) {
                     Timber.w("No episode found to play for series: ${item.name}")
                 }

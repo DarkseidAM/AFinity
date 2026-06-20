@@ -18,6 +18,7 @@
     <string name="login_add_new_server">Add New</string>
     <string name="login_server_url_label">Server URL</string>
     <string name="login_server_url_placeholder">https://jellyfin.example.com</string>
+    <string name="abs_server_url_placeholder">https://abs.example.com</string>
     <string name="login_btn_connect">Connect</string>
     <string name="login_btn_cancel">Cancel</string>
     <string name="login_local_network">Local Network</string>
@@ -39,6 +40,9 @@
     <string name="cd_search_icon">Search</string>
     <string name="cd_profile_icon">Profile</string>
     <string name="cd_offline_mode">Offline Mode</string>
+    <string name="cd_local_connection">Local Connection</string>
+    <string name="cd_tailscale_connection">Tailscale Connection</string>
+    <string name="cd_remote_connection">Remote Connection</string>
 
     <!--HomeScreen-->
     <string name="home_error_title">Something went wrong</string>
@@ -57,6 +61,7 @@
     <string name="home_latest_movies">Latest Movies</string>
     <string name="home_latest_tv_series">Latest TV Series</string>
     <string name="home_next_up">Next Up</string>
+    <string name="home_upcoming_episodes">Upcoming Episodes</string>
     <string name="home_genre_movies_title">%1$s Movies</string>
     <string name="home_genre_shows_title">%1$s Shows</string>
     <string name="home_person_starring">Starring %1$s</string>
@@ -102,6 +107,8 @@
 
     <string name="meta_runtime_hours_minutes">%1$dh %2$dm</string>
     <string name="meta_runtime_minutes">%1$dm</string>
+    <string name="meta_parts_fmt">%1$d Parts</string>
+    <string name="meta_part_of_fmt">Part %1$d/%2$d</string>
     <string name="meta_ends_at">Ends at %1$s</string>
     <string name="meta_episode_count">%1$d episodes</string>
     <string name="similar_items_title">More Like This</string>
@@ -117,10 +124,12 @@
     <string name="extra_type_short">Short</string>
     <string name="boxset_items_in_collection">Items in Collection</string>
 
-    <string name="episode_season_episode_fmt">S%1$d:E%2$d • %3$s</string>
+    <string name="episode_season_episode_fmt">S%1$d:E%2$s • %3$s</string>
     <string name="episode_duration_format">%1$dm</string>
     <string name="episode_play">Play</string>
     <string name="episode_resume">Resume</string>
+    <string name="episode_upcoming">UPCOMING</string>
+    <string name="episode_missing">MISSING</string>
 
     <string name="cd_air_date">Air date</string>
     <string name="cd_duration">Duration</string>
@@ -129,9 +138,10 @@
     <string name="cd_favorite">Favorite</string>
     <string name="cd_toggle_watched">Toggle Watched Status</string>
     <string name="chapters_title">Chapters</string>
+    <string name="parts_title">Parts</string>
 
-    <string name="quality_dialog_title">Select Download Quality</string>
-    <string name="quality_dialog_subtitle">Choose which quality to download</string>
+    <string name="quality_dialog_title">Select Version</string>
+    <string name="quality_dialog_subtitle">Choose which version to download</string>
     <string name="action_download">Download</string>
 
     <string name="cd_selected">Selected</string>
@@ -155,6 +165,7 @@
     <string name="action_play">Play</string>
     <string name="action_rewatch">Rewatch</string>
     <string name="action_resume_playback">Resume Playback</string>
+    <string name="play_error_missing_source">No playable item found on server</string>
     <string name="status_loading">Loading...</string>
 
     <string name="cd_backdrop_fmt">%1$s backdrop</string>
@@ -261,7 +272,7 @@
     <string name="player_error_title">Playback Error</string>
     <string name="player_up_next">Up Next</string>
     <string name="player_season_fmt">Season %1$d</string>
-    <string name="player_season_episode_fmt">Season %1$d : Episode %2$d</string>
+    <string name="player_season_episode_fmt">Season %1$d : Episode %2$s</string>
     <string name="time_minutes_short">%1$dm</string>
     <string name="time_seconds_short">%1$ds</string>
     <string name="cd_close">Close</string>
@@ -300,6 +311,7 @@
     <string name="cd_pause">Pause</string>
     <string name="cd_episodes">Episodes</string>
     <string name="cd_speed">Playback Speed</string>
+    <string name="cd_playback_info">Playback Stats</string>
     <string name="cd_audio_settings">Audio Settings</string>
     <string name="cd_subtitle_settings">Subtitle Settings</string>
     <string name="cd_aspect_ratio">Aspect Ratio</string>
@@ -369,6 +381,7 @@
     <string name="section_upcoming_tv">Upcoming TV Shows</string>
 
     <string name="section_recent_requests">Recent Requests</string>
+    <string name="section_available_requests">Available Requests</string>
     <string name="section_studios">Studios</string>
     <string name="section_networks">Networks</string>
     <string name="section_movie_genres">Movie Genres</string>
@@ -429,6 +442,8 @@
 
     <string name="settings_group_content_layout">Content Layout</string>
     <string name="pref_episode_layout_title">Episode Layout</string>
+    <string name="pref_show_ratings_title">Show Ratings</string>
+    <string name="pref_show_ratings_summary">Display IMDb and Rotten Tomatoes ratings on cards</string>
 
     <string name="theme_system">System Default</string>
     <string name="theme_light">Light</string>
@@ -460,9 +475,25 @@
     <string name="storage_free_on_device_fmt">%1$s free on device</string>
     <string name="storage_this_server">This server</string>
     <string name="storage_all_servers_fmt">%1$s total across all servers</string>
+    <string name="section_storage_locations">STORAGE LOCATIONS</string>
+    <string name="storage_used_on_volume_fmt">%1$s used on this server</string>
+    <string name="storage_free_of_total_fmt">%1$s free of %2$s</string>
+    <string name="storage_usage_combined_fmt">%1$s used here • %2$s free of %3$s</string>
+    <string name="storage_default_badge">Default</string>
+    <string name="storage_set_as_default">Set as default</string>
+    <string name="storage_unavailable_volume">Unavailable storage</string>
+    <string name="storage_unavailable_badge">Unavailable</string>
+    <string name="storage_unavailable_used_fmt">%1$s used • storage not connected</string>
+    <string name="download_unavailable_label">Unavailable — %1$s removed</string>
+    <string name="download_unavailable_indicator">Downloaded — storage unavailable</string>
+    <string name="download_unavailable_delete_title">Storage unavailable</string>
+    <string name="download_unavailable_delete_message">This download is on storage that isn\'t connected, so its files can\'t be deleted right now. Remove it from the list anyway? The files will remain on the storage if you reconnect it.</string>
+    <string name="download_unavailable_delete_confirm">Remove from list</string>
+    <string name="download_location_section">Storage location</string>
 
     <string name="download_preferences_title">Download Settings</string>
     <string name="pref_download_wifi_only_title">Wi-Fi only</string>
+    <string name="pref_max_concurrent_downloads">Max parallel downloads</string>
     <string name="pref_download_wifi_only_subtitle">Only download over Wi-Fi</string>
     <string name="pref_download_mobile_data_warning">Downloading over mobile data may incur additional data charges from your carrier</string>
 
@@ -470,6 +501,7 @@
     <string name="cd_pause_download">Pause download</string>
     <string name="cd_resume_download">Resume download</string>
     <string name="cd_cancel_download">Cancel download</string>
+    <string name="cd_queued_tap_cancel">Queued — tap to cancel</string>
     <string name="cd_delete_download">Delete download</string>
     <string name="cd_status_failed">Failed</string>
     <string name="cd_status_completed">Completed</string>
@@ -510,10 +542,11 @@
     <string name="pref_pip_background_summary">Keep playing audio when screen is off</string>
 
     <string name="pref_group_interface">Interface</string>
-    <string name="pref_skip_intro_title">Skip Intro Button</string>
-    <string name="pref_skip_intro_summary">Show button when intro is detected</string>
-    <string name="pref_skip_outro_title">Skip Outro Button</string>
-    <string name="pref_skip_outro_summary">Show button when outro is detected</string>
+    <string name="pref_skip_intro_title">Skip Intro</string>
+    <string name="pref_skip_outro_title">Skip Outro</string>
+    <string name="skip_mode_button">Show button</string>
+    <string name="skip_mode_auto_skip">Auto-skip</string>
+    <string name="skip_mode_disabled">Disabled</string>
     <string name="pref_autohide_logo_title">Auto-hide Logo</string>
     <string name="pref_autohide_logo_summary">Hide title logo with player controls</string>
     <string name="pref_default_zoom_title">Default Zoom</string>
@@ -583,6 +616,15 @@
     <string name="error_url_required">Server URL is required</string>
     <string name="error_test_connection_first">Please test the connection first</string>
     <string name="error_save_server_failed_fmt">Failed to save server: %1$s</string>
+    <string name="error_all_addresses_unreachable">Could not reach server at any saved address</string>
+
+    <string name="address_added_title">Address Added</string>
+    <string name="address_added_to_existing_server">This address has been added to your existing server "%1$s".</string>
+    <string name="btn_ok">OK</string>
+    <string name="address_already_saved">This address is already saved for this server</string>
+    <string name="label_primary_address">Primary</string>
+    <string name="action_set_primary">Set as primary</string>
+    <string name="error_cannot_delete_primary">Cannot delete the primary address</string>
 
     <string name="server_management_title">Manage Servers</string>
     <string name="cd_add_server">Add Server</string>
@@ -694,6 +736,14 @@
 
     <string name="pref_switch_session">Switch Session</string>
     <string name="pref_switch_session_summary">Change user or server</string>
+    <string name="pref_authorize_quickconnect">Authorize QuickConnect</string>
+    <string name="pref_authorize_quickconnect_summary">Authorize a sign-in request from another device</string>
+    <string name="dialog_quickconnect_title">Authorize QuickConnect</string>
+    <string name="dialog_quickconnect_message">Enter the 6-digit code shown on the device requesting sign-in</string>
+    <string name="dialog_quickconnect_authorized">Device authorized successfully</string>
+    <string name="action_authorize">Authorize</string>
+    <string name="error_quickconnect_invalid_code">Invalid or expired code. Please try again.</string>
+    <string name="error_quickconnect_failed_fmt">Authorization failed: %1$s</string>
 
     <string name="pref_group_connections">Connections</string>
     <string name="pref_manage_servers">Manage Servers</string>
@@ -718,6 +768,8 @@
 
     <string name="pref_licenses">Licenses</string>
     <string name="pref_licenses_summary">Open source libraries</string>
+    <string name="pref_send_logs">Send Logs</string>
+    <string name="pref_send_logs_summary">Share diagnostic logs for bug reports</string>
 
     <string name="action_logout">Log Out</string>
 
@@ -729,12 +781,15 @@
     <string name="action_disconnect">Disconnect</string>
     <string name="dialog_error_title">Error</string>
     <string name="action_ok">OK</string>
+    <string name="action_close">Close</string>
 
     <string name="error_logout_failed_fmt">Logout failed: %1$s</string>
     <string name="error_jellyseerr_logout_failed_fmt">Failed to logout from Seerr: %1$s</string>
 
     <string name="watchlist_title">Watchlist</string>
     <string name="watchlist_empty">Your watchlist is empty</string>
+    <string name="watchlist_empty_title">Nothing Watchlisted Yet</string>
+    <string name="watchlists_empty_message">Items you add to watchlist will appear here</string>
     <string name="watchlist_section_header_fmt">%1$s (%2$d)</string>
 
     <string name="section_movies">Movies</string>
@@ -744,6 +799,62 @@
     <string name="section_episodes">Episodes</string>
     <string name="section_tv_channels">Live TV Channels</string>
     <string name="section_people">People</string>
+
+    <string name="warning_http_insecure">Warning: Connecting over HTTP sends your password in plain text. HTTPS is highly recommended.</string>
+
+    <string name="dialog_restart_server_title">Restart Server</string>
+    <string name="dialog_restart_server_message">Restart %1$s? Active streams will be interrupted.</string>
+    <string name="action_restart">Restart</string>
+    <string name="dialog_shutdown_server_title">Shutdown Server</string>
+    <string name="dialog_shutdown_server_message">Shut down %1$s? The server will go offline completely.</string>
+    <string name="action_shutdown">Shutdown</string>
+    <string name="title_control_panel">Control Panel</string>
+    <string name="action_refresh_libraries">Refresh Libraries</string>
+    <string name="active_sessions_title">Active Sessions</string>
+    <string name="active_sessions_count_fmt">Active Sessions (%1$d)</string>
+    <string name="active_sessions_idle_fmt">+%1$d idle</string>
+    <string name="active_sessions_empty">No active sessions.</string>
+    <string name="category_running">Running</string>
+    <string name="category_other">Other</string>
+    <string name="cd_stop_task">Stop task</string>
+    <string name="cd_run_task">Run task</string>
+
+    <string name="tab_jellyfin">Jellyfin</string>
+    <string name="tab_seerr">Seerr</string>
+    <string name="tab_abs">ABS</string>
+    <string name="server_section_active">Active Server</string>
+    <string name="server_section_saved">Saved Servers</string>
+
+    <string name="error_address_already_exists">Address already exists</string>
+
+    <string name="task_never_run">Never run</string>
+    <string name="task_just_now">just now</string>
+    <string name="task_minutes_ago">about %1$dm ago</string>
+    <string name="task_hours_ago">about %1$dh ago</string>
+    <string name="task_days_ago">%1$dd ago</string>
+    <string name="task_duration_less_than_minute">, taking less than a minute</string>
+    <string name="task_duration_minutes">, taking %1$dm</string>
+    <string name="task_duration_hours_minutes">, taking %1$dh %2$dm</string>
+    <string name="task_last_ran_fmt">Last ran %1$s%2$s</string>
+
+    <string name="section_administration">Administration</string>
+    <string name="cd_control_panel">Control Panel</string>
+    <string name="action_open_control_panel">Open Control Panel</string>
+    <string name="control_panel_active_only">Available for the active server only</string>
+
+    <string name="state_loading_data">Loading data...</string>
+    <string name="action_remove">Remove</string>
+    <string name="cd_jellyseerr">Jellyseerr</string>
+    <string name="cd_audiobookshelf">Audiobookshelf</string>
+    <string name="cd_tmdb">TMDB</string>
+    <string name="cd_mdblist">MDBList</string>
+
+    <string name="permission_request">Request</string>
+    <string name="quota_days_fmt">%1$d / %2$d days</string>
+    <string name="duration_hours_fmt">%.0f hrs</string>
+
+    <string name="cd_manage_addresses">Manage Addresses</string>
+    <string name="cd_add_address">Add address</string>
 
     <!--Chromecast-->
     <string name="cd_cast">Cast</string>
@@ -762,4 +873,329 @@
     <string name="pref_cast_hevc_title">Enable HEVC</string>
     <string name="pref_cast_hevc_description">Enable for Chromecast Ultra/Google TV</string>
     <string name="pref_cast_max_bitrate_title">Max Bitrate</string>
+    <string name="pref_buffer_size_title">Video Buffer Size</string>
+
+    <!--Audiobookshelf Libraries / Item Screens-->
+    <string name="abs_connect_title">Connect to Audiobookshelf</string>
+    <string name="abs_connect_button">Connect</string>
+    <string name="abs_tab_home">Home</string>
+    <string name="abs_tab_series">Series</string>
+    <string name="abs_placeholder_server_url">https://abs.example.com</string>
+    <string name="abs_no_libraries_found">No libraries found</string>
+    <string name="abs_no_items_in_library">No items in library</string>
+    <string name="abs_no_personalized_content">No personalized content available</string>
+    <string name="abs_no_series_found">No series found</string>
+    <string name="abs_error_load_item">Failed to load item</string>
+    <string name="abs_error_load_series">Failed to load series</string>
+    <string name="abs_included_in_series">Included in Series</string>
+    <string name="abs_sort_episodes_title">Sort Episodes</string>
+    <string name="abs_sort_pub_date">Pub Date</string>
+    <string name="abs_sort_title">Title</string>
+    <string name="abs_sort_season">Season</string>
+    <string name="abs_sort_episode">Episode</string>
+    <string name="abs_sort_filename">Filename</string>
+    <string name="abs_narrated_by">Narrated by: </string>
+    <string name="abs_label_episodes">EPISODES</string>
+    <string name="abs_label_chapters">CHAPTERS</string>
+
+    <!--Audiobookshelf Player-->
+    <string name="abs_now_playing">NOW PLAYING</string>
+    <string name="abs_sleep_timer_title">SLEEP TIMER</string>
+    <string name="abs_sleep_timer_stop">Stop Timer</string>
+    <string name="abs_sleep_timer_set_new">Set New Timer</string>
+    <string name="abs_skip_silence">SKIP SILENCE</string>
+    <string name="abs_volume_boost">VOLUME BOOST</string>
+    <string name="abs_playback_speed_label">PLAYBACK SPEED</string>
+    <string name="abs_total_listening_time">TOTAL LISTENING TIME</string>
+    <string name="abs_hours_unit">h</string>
+    <string name="abs_minutes_unit">m</string>
+
+    <!--Audiobookshelf Accessibility-->
+    <string name="cd_abs_sort">Sort</string>
+    <string name="cd_abs_playing">Playing</string>
+    <string name="cd_abs_completed">Completed</string>
+    <string name="cd_abs_cover">Cover</string>
+    <string name="cd_abs_cover_fmt">Cover for %1$s</string>
+    <string name="cd_abs_language">Language</string>
+    <string name="cd_abs_explicit">Explicit</string>
+    <string name="cd_abs_abridged">Abridged</string>
+    <string name="cd_abs_open_item_fmt">Open %1$s</string>
+    <string name="cd_abs_open_podcast">Open podcast</string>
+    <string name="cd_abs_view_series">View series</string>
+    <string name="cd_abs_play_episode">Play episode</string>
+    <string name="cd_abs_downloaded_delete">Downloaded — tap to delete</string>
+    <string name="cd_abs_download_episode">Download episode</string>
+    <string name="cd_abs_download">Download</string>
+    <string name="cd_abs_minimize">Minimize</string>
+    <string name="cd_abs_options">Options</string>
+    <string name="cd_abs_previous_preset">Previous preset</string>
+    <string name="cd_abs_next_preset">Next preset</string>
+
+    <!--Audiobookshelf Item Header-->
+    <string name="abs_finished">Finished</string>
+    <string name="abs_listen_again">Listen Again</string>
+    <string name="abs_continue_listening">Continue Listening</string>
+    <string name="abs_show_less">Show Less</string>
+    <string name="abs_read_more">Read more</string>
+    <string name="abs_overview">Overview</string>
+    <string name="abs_details">Details</string>
+    <string name="abs_tags">Tags</string>
+    <string name="abs_publisher">Publisher</string>
+    <string name="abs_year">Year</string>
+    <string name="abs_by_author_fmt">by %1$s</string>
+
+    <!--Request Confirmation Dialog-->
+    <string name="request_on_seerr_title">Request on Seerr</string>
+    <string name="request_already_requested">Already Requested</string>
+    <string name="request_rt_critic">RT Critic</string>
+    <string name="request_rt_audience">RT Audience</string>
+    <string name="request_fulfillment_details">Fulfillment Details</string>
+    <string name="request_4k_title">Request in 4K</string>
+    <string name="request_override_options">Override Options</string>
+    <string name="request_destination_server">Destination Server</string>
+    <string name="request_quality_profile">Quality Profile</string>
+    <string name="request_root_folder">Root Folder</string>
+    <string name="request_advanced_options">Advanced Options</string>
+    <string name="request_radarr_server">Radarr Server</string>
+    <string name="request_sonarr_server">Sonarr Server</string>
+    <string name="request_delete_action">Delete Request</string>
+    <string name="request_manage_title">Manage Request</string>
+    <string name="request_approve">Approve</string>
+    <string name="request_decline">Decline</string>
+
+    <!--Season Selector-->
+    <string name="season_selector_title">Select Seasons</string>
+    <string name="season_all_seasons">All Seasons</string>
+    <string name="season_all_remaining_seasons">All Remaining Seasons</string>
+    <string name="season_n_fmt">Season %1$d</string>
+
+    <!--Home Screen-->
+    <string name="home_downloaded_audiobooks">Downloaded Audiobooks</string>
+    <string name="home_downloaded_episodes">Downloaded Episodes</string>
+    <string name="home_genre_top_movies_fmt">Top %1$s Movies</string>
+    <string name="home_genre_top_series_fmt">Top %1$s Series</string>
+    <string name="home_best_of_studio_fmt">Best of %1$s</string>
+
+    <!--Settings - Integrations-->
+    <string name="pref_group_integrations">Integrations</string>
+    <string name="pref_tmdb_api_key_title">TMDB API Key</string>
+    <string name="pref_mdblist_api_key_title">MDBList API Key</string>
+    <string name="pref_tmdb_config_title">TMDB Configuration</string>
+    <string name="pref_mdblist_config_title">MDBList Configuration</string>
+    <string name="pref_omdb_api_key_title">OMDb API Key</string>
+    <string name="pref_omdb_config_title">OMDb Configuration</string>
+    <string name="pref_api_key_configured">Configured</string>
+    <string name="pref_api_key_not_configured">Not configured</string>
+    <string name="action_clear_key">Clear Key</string>
+    <string name="action_save">Save</string>
+
+    <!--Download Settings Sections-->
+    <string name="section_storage_cache">STORAGE &amp; CACHE</string>
+    <string name="section_videos">VIDEOS</string>
+    <string name="section_download_audiobooks">AUDIOBOOKS</string>
+    <string name="section_download_podcasts">PODCASTS</string>
+
+    <!--Server Management-->
+    <string name="address_type_local">Local</string>
+    <string name="address_type_tailscale">Tailscale</string>
+    <string name="address_type_remote">Remote</string>
+    <string name="server_version_fmt">v%1$s</string>
+    <string name="server_manage_connections">Manage Connections</string>
+    <string name="server_active_connection">Active Connection</string>
+    <string name="server_default_proxy">Default (Proxy)</string>
+    <string name="server_no_alternate_addresses">No alternate addresses configured.</string>
+    <string name="section_library_overview">Library Overview</string>
+    <string name="section_active_services">Active Services</string>
+    <string name="section_network">Network</string>
+    <string name="section_user_profile_header">User Profile</string>
+    <string name="section_request_stats">Request Stats</string>
+    <string name="section_activity">Activity</string>
+    <string name="section_library_header">Library</string>
+    <string name="stat_series">Series</string>
+    <string name="stat_collections">Collections</string>
+    <string name="stat_total">Total</string>
+    <string name="stat_approved">Approved</string>
+    <string name="label_name">Name</string>
+    <string name="label_role">Role</string>
+    <string name="role_admin">Admin</string>
+    <string name="role_user">User</string>
+    <string name="label_permissions">Permissions</string>
+    <string name="permission_auto_approve">Auto-Approve</string>
+    <string name="permission_manage">Manage</string>
+    <string name="label_movie_quota">Movie quota</string>
+    <string name="label_tv_quota">TV quota</string>
+    <string name="label_unlimited">Unlimited</string>
+    <string name="time_today">Today</string>
+    <string name="time_this_week">This Week</string>
+    <string name="time_this_month">This Month</string>
+    <string name="stat_current_streak">Current Streak</string>
+    <string name="stat_best_streak">Best Streak</string>
+    <string name="stat_days_active">Days Active</string>
+    <string name="cd_server_options">Server Options</string>
+    <string name="cd_security_warning">Security Warning</string>
+
+    <!--Server Management - more users plural handled inline-->
+    <string name="server_more_users_fmt">+%1$d more user</string>
+    <string name="server_more_users_plural_fmt">+%1$d more users</string>
+    <string name="server_primary_connection">Primary Connection</string>
+    <string name="server_backup_routes_fmt">+ %1$d backup route(s)</string>
+    <string name="ws_server_restarting">Server is restarting, reconnecting automatically…</string>
+    <string name="ws_server_shutdown">Server has shut down</string>
+    <string name="service_label_seerr">Seerr</string>
+    <string name="service_label_abs">ABS</string>
+    <string name="service_label_tmdb">TMDB</string>
+    <string name="service_label_mdblist">MDBList</string>
+    <string name="stat_movies">Movies</string>
+    <string name="stat_episodes">Episodes</string>
+    <string name="stat_pending">Pending</string>
+    <string name="stat_available">Available</string>
+    <string name="stat_items">Items</string>
+    <string name="stat_content">Content</string>
+    <string name="stat_audiobooks">Audiobooks</string>
+    <string name="stat_podcasts">Podcasts</string>
+    <string name="stat_in_progress">In Progress</string>
+    <string name="stat_libraries">Libraries</string>
+    <string name="abs_days_unit">d</string>
+
+    <!--Search-->
+    <string name="section_discover_request">Discover &amp; Request</string>
+    <string name="section_audiobooks_podcasts">Audiobooks &amp; Podcasts</string>
+
+    <!--Special Features - Extra Types (missing)-->
+    <string name="extra_type_theme_song">Theme Song</string>
+    <string name="extra_type_theme_video">Theme Video</string>
+
+    <!--Cast-->
+    <string name="cd_episode_list">Episode List</string>
+    <string name="cd_playback_speed">Playback Speed</string>
+    <string name="cd_audio_track">Audio Track</string>
+    <string name="cd_speeding_up">Speeding up</string>
+
+    <!--General Fallbacks-->
+    <string name="unknown_title">Unknown Title</string>
+    <string name="unknown_author">Unknown Author</string>
+    <string name="unknown_episode">Unknown Episode</string>
+    <string name="unknown_device">Unknown Device</string>
+    <string name="unknown_podcast">Unknown Podcast</string>
+    <string name="cd_rotten_tomatoes_rating">Rotten Tomatoes Rating</string>
+    <string name="action_read_more">Read more</string>
+
+    <!--Trailer Errors (Toast)-->
+    <string name="error_no_trailer">No trailer available</string>
+    <string name="error_unable_open_trailer">Unable to open trailer</string>
+
+    <!--Notifications-->
+    <string name="notif_update_available_fmt">Version %1$s is now available</string>
+    <string name="notif_update_tap_to_download_fmt">Version %1$s is now available. Tap to download.</string>
+    <string name="notif_channel_updates_desc">Notifications for app updates</string>
+    <string name="notif_downloading_fmt">Downloading %1$s</string>
+    <string name="notif_channel_downloads_desc">Background download tasks</string>
+
+    <!--ViewModel Error Strings-->
+    <string name="error_invalid_url_format">Invalid URL format</string>
+    <string name="error_email_username_required">Email or username is required</string>
+    <string name="error_password_required">Password is required</string>
+    <string name="error_invalid_credentials">Invalid email or password</string>
+    <string name="error_server_connect_failed_fmt">Failed to connect to server: %1$s</string>
+    <string name="error_login_failed_fmt">Login failed: %1$s</string>
+    <string name="error_username_required">Username is required</string>
+    <string name="error_quick_connect_fmt">Quick Connect error: %1$s</string>
+    <string name="error_failed_load_channels">Failed to load channels</string>
+    <string name="error_failed_check_livetv">Failed to check Live TV access</string>
+    <string name="error_content_unavailable_server">Content not available on this server</string>
+    <string name="error_item_unavailable_offline">Item not available offline</string>
+    <string name="error_item_not_found">Item not found</string>
+    <string name="error_invalid_person_id">Invalid or missing Person ID</string>
+    <string name="error_person_not_found">Person not found</string>
+    <string name="error_server_url_not_available">Server URL not available</string>
+    <string name="error_server_url_required">Server URL is required</string>
+    <string name="error_set_server_url_fmt">Failed to set server URL: %1$s</string>
+    <string name="error_unexpected_fmt">An unexpected error occurred: %1$s</string>
+    <string name="error_not_valid_jellyfin_fmt">Not a valid Jellyfin server: %1$s</string>
+    <string name="error_connect_to_server_fmt">Failed to connect to %1$s: %2$s</string>
+    <string name="error_server_not_found_login">Server not found. Please login again.</string>
+    <string name="error_session_expired_login">Saved session expired. Please login again.</string>
+    <string name="error_login_no_token">Login succeeded but user ID or token was missing.</string>
+    <string name="error_quick_connect_start">Failed to start Quick Connect. Please try again.</string>
+    <string name="error_failed_load_item_fmt">Failed to load item: %1$s</string>
+    <string name="error_failed_load_person_fmt">Failed to load person details: %1$s</string>
+    <string name="error_request_update_failed_fmt">Update failed: %1$s</string>
+    <string name="error_request_fail_delete_fmt">Failed to delete: %1$s</string>
+    <string name="error_request_fail_approve_fmt">Approve failed: %1$s</string>
+    <string name="error_request_fail_decline_fmt">Decline failed: %1$s</string>
+
+    <!--Admin Actions (ActionButtonsRow / EpisodeDetailOverlay menu)-->
+    <string name="cd_admin_manage">Manage</string>
+    <string name="admin_action_edit_metadata">Edit Metadata</string>
+    <string name="admin_action_identify">Identify</string>
+    <string name="admin_action_edit_images">Edit Images</string>
+    <string name="admin_action_refresh_metadata">Refresh Metadata</string>
+
+    <!--Admin - Refresh Metadata Dialog-->
+    <string name="admin_refresh_title">Refresh Metadata</string>
+    <string name="admin_refresh_mode_label">Refresh mode</string>
+    <string name="admin_refresh_mode_default">Default</string>
+    <string name="admin_refresh_mode_default_desc">Fill missing data only</string>
+    <string name="admin_refresh_mode_validate">Validate</string>
+    <string name="admin_refresh_mode_validate_desc">Check and correct all fields</string>
+    <string name="admin_refresh_mode_full">Full</string>
+    <string name="admin_refresh_mode_full_desc">Replace everything from providers</string>
+    <string name="admin_refresh_replace_images">Replace existing images</string>
+    <string name="admin_refresh_replace_metadata">Replace all metadata</string>
+    <string name="admin_btn_refresh">Refresh</string>
+
+    <!--Admin - Edit Metadata Screen-->
+    <string name="admin_edit_metadata_title">Edit Metadata</string>
+    <string name="admin_save_changes">Save Changes</string>
+    <string name="admin_saving">Saving…</string>
+    <string name="admin_tab_general">General</string>
+    <string name="admin_tab_people">People</string>
+    <string name="admin_tab_advanced">Advanced</string>
+    <string name="admin_field_title">Title</string>
+    <string name="admin_field_original_title">Original Title</string>
+    <string name="admin_field_overview">Overview</string>
+    <string name="admin_field_year">Year</string>
+    <string name="admin_field_rating">Rating</string>
+    <string name="admin_section_genres">Genres</string>
+    <string name="admin_section_tags">Tags</string>
+    <string name="admin_section_studios">Studios</string>
+    <string name="admin_section_cast">Cast &amp; Crew</string>
+    <string name="admin_add_person">Add Person</string>
+    <string name="admin_close_form">Close Form</string>
+    <string name="admin_field_person_name">Name</string>
+    <string name="admin_field_person_type">Type (Actor, Director, Writer…)</string>
+    <string name="admin_field_person_role">Role / Character</string>
+    <string name="admin_add_to_list">Add to List</string>
+    <string name="admin_add_item_placeholder">Add item…</string>
+    <string name="admin_field_community_rating">Community Rating</string>
+    <string name="admin_field_custom_rating">Custom Rating</string>
+    <string name="admin_field_series_status">Status (Continuing / Ended / Unreleased)</string>
+    <string name="admin_field_display_order">Display Order (AirDate / DVD / Absolute)</string>
+    <string name="admin_lock_data">Lock data (prevent auto-refresh from overwriting)</string>
+    <string name="admin_section_locked_fields">Locked fields</string>
+    <string name="cd_admin_remove">Remove</string>
+    <string name="cd_admin_add">Add</string>
+
+    <!--Admin - Identify Screen-->
+    <string name="admin_identify_title">Identify Media</string>
+    <string name="admin_identify_field_name">Name</string>
+    <string name="admin_identify_field_year">Year</string>
+    <string name="admin_identify_provider_ids">Provider IDs (Optional)</string>
+    <string name="admin_identify_replace_images">Replace all images</string>
+    <string name="admin_identify_search">Search</string>
+    <string name="admin_identify_results">Results</string>
+    <string name="admin_identify_no_results">No results found</string>
+
+    <!--Admin - Edit Images Screen-->
+    <string name="admin_edit_images_title">Edit Images</string>
+    <string name="admin_delete_image_title">Delete image?</string>
+    <string name="admin_delete_image_message">This will permanently remove the image from the server.</string>
+    <string name="admin_upload_image">Upload Image</string>
+    <string name="admin_image_type_primary">Primary</string>
+    <string name="admin_image_type_backdrop">Backdrop</string>
+    <string name="admin_image_type_logo">Logo</string>
+    <string name="admin_include_all_languages">Include all languages</string>
+    <string name="admin_images_on_server">Current Images</string>
+    <string name="admin_images_from_providers">Available from Providers</string>
+    <string name="cd_admin_no_image">No image placeholder</string>
 </resources>

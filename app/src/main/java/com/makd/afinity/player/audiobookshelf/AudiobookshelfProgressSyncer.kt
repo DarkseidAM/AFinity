@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.makd.afinity.data.repository.AudiobookshelfRepository
+import com.makd.afinity.data.repository.audiobookshelf.AbsProgressSyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ constructor(
     @param:ApplicationContext private val context: Context,
     private val audiobookshelfRepository: AudiobookshelfRepository,
     private val playbackManager: AudiobookshelfPlaybackManager,
+    private val absSyncScheduler: AbsProgressSyncScheduler,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var syncJob: Job? = null
@@ -43,23 +45,24 @@ constructor(
         totalTimeListened = 0.0
         currentPlaylistEpisodeId = playbackManager.playbackState.value.episodeId
 
-        syncJob =
-            scope.launch {
-                while (true) {
-                    val interval = getSyncInterval()
-                    delay(interval)
+        syncJob = scope.launch {
+            while (true) {
+                val interval = getSyncInterval()
+                delay(interval)
 
-                    syncProgress()
-                }
+                syncProgress()
             }
+        }
 
         Timber.d("Progress syncer started")
     }
 
     fun stopSyncing() {
-        syncJob?.cancel()
-        syncJob = null
-        Timber.d("Progress syncer stopped")
+        if (syncJob != null) {
+            syncJob?.cancel()
+            syncJob = null
+            Timber.d("Progress syncer stopped")
+        }
     }
 
     suspend fun syncNow() {
@@ -85,6 +88,24 @@ constructor(
         val timeListenedSinceLastSync = (currentTime - lastSyncTime).coerceAtLeast(0.0)
         totalTimeListened += timeListenedSinceLastSync
         lastSyncTime = currentTime
+
+        if (sessionId.startsWith("local_")) {
+            val itemId = state.itemId ?: return
+            val (serverId, userId) = audiobookshelfRepository.currentActiveContext ?: return
+            Timber.d(
+                "ProgressSync[audiobook]: saving offline progress itemId=$itemId episodeId=${state.episodeId} currentTime=$currentTime duration=${state.duration}"
+            )
+            audiobookshelfRepository.updateProgress(
+                itemId = itemId,
+                episodeId = state.episodeId,
+                currentTime = currentTime,
+                duration = state.duration,
+                isFinished = state.duration > 0 && currentTime / state.duration >= 0.99,
+            )
+            absSyncScheduler.scheduleSync(serverId, userId)
+            Timber.d("ProgressSync[audiobook]: offline progress saved and sync scheduled")
+            return
+        }
 
         try {
             val result =
@@ -122,6 +143,24 @@ constructor(
 
         val timeListenedSinceLastSync = (state.currentTime - lastSyncTime).coerceAtLeast(0.0)
         lastSyncTime = state.currentTime
+
+        if (sessionId.startsWith("local_")) {
+            val itemId = state.itemId ?: return
+            val (serverId, userId) = audiobookshelfRepository.currentActiveContext ?: return
+            Timber.d(
+                "ProgressSync[podcast]: saving offline progress itemId=$itemId episodeId=$episodeId currentTime=$episodeCurrentTime duration=$episodeDuration"
+            )
+            audiobookshelfRepository.updateProgress(
+                itemId = itemId,
+                episodeId = episodeId,
+                currentTime = episodeCurrentTime,
+                duration = episodeDuration,
+                isFinished = episodeDuration > 0 && episodeCurrentTime / episodeDuration >= 0.99,
+            )
+            absSyncScheduler.scheduleSync(serverId, userId)
+            Timber.d("ProgressSync[podcast]: offline progress saved and sync scheduled")
+            return
+        }
 
         try {
             val result =

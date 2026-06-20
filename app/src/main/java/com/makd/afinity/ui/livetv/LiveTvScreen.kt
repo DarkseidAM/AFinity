@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -45,7 +44,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
 import com.makd.afinity.R
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AfinityTopAppBar
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.livetv.tabs.LiveTvChannelsTab
 import com.makd.afinity.ui.livetv.tabs.LiveTvGuideTab
 import com.makd.afinity.ui.livetv.tabs.LiveTvHomeTab
@@ -64,6 +65,7 @@ fun LiveTvScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedLetter by viewModel.selectedLetter.collectAsStateWithLifecycle()
+    val playerOffset = LocalPlayerOffset.current
 
     val pagerState = rememberPagerState(pageCount = { 3 })
     val coroutineScope = rememberCoroutineScope()
@@ -73,11 +75,16 @@ fun LiveTvScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refresh()
+                viewModel.setScreenVisibility(true)
+            } else if (event == Lifecycle.Event.ON_PAUSE) {
+                viewModel.setScreenVisibility(false)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.setScreenVisibility(false)
+        }
     }
 
     LaunchedEffect(pagerState.currentPage) {
@@ -106,20 +113,16 @@ fun LiveTvScreen(
                 },
                 onSearchClick = { navController.navigate(Destination.createSearchRoute()) },
                 onProfileClick = { navController.navigate(Destination.createSettingsRoute()) },
+                userName = mainUiState.userName,
                 userProfileImageUrl = mainUiState.userProfileImageUrl,
-                backgroundOpacity = 1f,
+                backgroundOpacity = { 1f },
             )
         },
         modifier = modifier,
     ) { paddingValues ->
         when {
             uiState.isLoading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(paddingValues),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
+                FullScreenLoading(modifier = Modifier.padding(paddingValues))
             }
 
             !uiState.hasLiveTvAccess -> {
@@ -190,7 +193,11 @@ fun LiveTvScreen(
                         }
                     }
 
-                    HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        userScrollEnabled = pagerState.currentPage != 1,
+                    ) { page ->
                         when (page) {
                             0 ->
                                 LiveTvHomeTab(

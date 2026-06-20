@@ -29,11 +29,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,28 +46,33 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.makd.afinity.R
 import com.makd.afinity.data.models.extensions.primaryBlurHash
 import com.makd.afinity.data.models.extensions.primaryImageUrl
 import com.makd.afinity.data.models.livetv.AfinityChannel
+import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinityPersonDetail
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AfinityTopAppBar
 import com.makd.afinity.ui.components.AsyncImage
+import com.makd.afinity.ui.components.EpisodeOverlayHandler
 import com.makd.afinity.ui.components.FullScreenEmpty
 import com.makd.afinity.ui.components.FullScreenError
 import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.components.MediaRowSection
-import com.makd.afinity.ui.item.components.EpisodeDetailOverlay
 import com.makd.afinity.ui.main.MainUiState
 import com.makd.afinity.ui.player.PlayerLauncher
 import com.makd.afinity.ui.theme.CardDimensions.landscapeWidth
 import com.makd.afinity.ui.theme.CardDimensions.portraitWidth
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,12 +88,23 @@ fun FavoritesScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedEpisode by viewModel.selectedEpisode.collectAsStateWithLifecycle()
-    val isLoadingEpisode by viewModel.isLoadingEpisode.collectAsStateWithLifecycle()
     val selectedEpisodeWatchlistStatus by
         viewModel.selectedEpisodeWatchlistStatus.collectAsStateWithLifecycle()
     val selectedEpisodeDownloadInfo by
         viewModel.selectedEpisodeDownloadInfo.collectAsStateWithLifecycle()
-    var pendingNavigationSeriesId by remember { mutableStateOf<String?>(null) }
+    val canDownload by viewModel.canDownload.collectAsStateWithLifecycle()
+    val playerOffset = LocalPlayerOffset.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(Unit) { viewModel.loadFavorites() }
 
@@ -112,6 +127,7 @@ fun FavoritesScreen(
                 onSearchClick = { navController.navigate(Destination.createSearchRoute()) },
                 onProfileClick = { navController.navigate(Destination.createSettingsRoute()) },
                 userProfileImageUrl = mainUiState.userProfileImageUrl,
+                userName = mainUiState.userName,
             )
         },
         modifier = modifier,
@@ -136,11 +152,27 @@ fun FavoritesScreen(
                         FullScreenEmpty(
                             title = stringResource(R.string.favorites_empty_title),
                             message = stringResource(R.string.favorites_empty_message),
+                            actionText = "Browse Media",
+                            onActionClick = {
+                                navController.navigate(Destination.HOME.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
                         )
                     } else {
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
+                            contentPadding =
+                                PaddingValues(
+                                    start = 16.dp,
+                                    top = 16.dp,
+                                    end = 16.dp,
+                                    bottom = 16.dp + playerOffset,
+                                ),
                             verticalArrangement = Arrangement.spacedBy(24.dp),
                         ) {
                             if (uiState.boxSets.isNotEmpty()) {
@@ -189,10 +221,7 @@ fun FavoritesScreen(
                                         title = stringResource(R.string.section_episodes),
                                         items = uiState.episodes,
                                         onItemClick = { episode ->
-                                            viewModel.selectEpisode(
-                                                episode
-                                                    as com.makd.afinity.data.models.media.AfinityEpisode
-                                            )
+                                            viewModel.selectEpisode(episode as AfinityEpisode)
                                         },
                                         cardWidth = landscapeWidth,
                                     )
@@ -232,48 +261,21 @@ fun FavoritesScreen(
         }
     }
 
-    selectedEpisode?.let { episode ->
-        EpisodeDetailOverlay(
-            episode = episode,
-            isInWatchlist = selectedEpisodeWatchlistStatus,
-            downloadInfo = selectedEpisodeDownloadInfo,
-            onDismiss = { viewModel.clearSelectedEpisode() },
-            onPlayClick = { episodeToPlay, selection ->
-                viewModel.clearSelectedEpisode()
-                com.makd.afinity.ui.player.PlayerLauncher.launch(
-                    context = context,
-                    itemId = episodeToPlay.id,
-                    mediaSourceId = selection.mediaSourceId,
-                    audioStreamIndex = selection.audioStreamIndex,
-                    subtitleStreamIndex = selection.subtitleStreamIndex,
-                    startPositionMs = selection.startPositionMs,
-                )
-            },
-            onToggleFavorite = { viewModel.toggleEpisodeFavorite(episode) },
-            onToggleWatchlist = { viewModel.toggleEpisodeWatchlist(episode) },
-            onToggleWatched = { viewModel.toggleEpisodeWatched(episode) },
-            onDownloadClick = { viewModel.onDownloadClick() },
-            onPauseDownload = { viewModel.pauseDownload() },
-            onResumeDownload = { viewModel.resumeDownload() },
-            onCancelDownload = { viewModel.cancelDownload() },
-            onGoToSeries = {
-                viewModel.clearSelectedEpisode()
-                pendingNavigationSeriesId = episode.seriesId?.toString()
-            },
-        )
-    }
-    LaunchedEffect(selectedEpisode, pendingNavigationSeriesId) {
-        if (selectedEpisode == null && pendingNavigationSeriesId != null) {
-            delay(300)
-            val route =
-                Destination.createItemDetailRoute(
-                    itemId = pendingNavigationSeriesId!!,
-                    itemType = "Series",
-                )
-            navController.navigate(route)
-            pendingNavigationSeriesId = null
-        }
-    }
+    EpisodeOverlayHandler(
+        selectedEpisode = selectedEpisode,
+        watchlistStatus = selectedEpisodeWatchlistStatus,
+        downloadInfo = selectedEpisodeDownloadInfo,
+        canDownload = canDownload,
+        onClearSelection = { viewModel.clearSelectedEpisode() },
+        onToggleFavorite = { episode -> viewModel.toggleEpisodeFavorite(episode) },
+        onToggleWatchlist = { episode -> viewModel.toggleEpisodeWatchlist(episode) },
+        onToggleWatched = { episode -> viewModel.toggleEpisodeWatched(episode) },
+        onNavigateToSeries = { seriesId ->
+            navController.navigate(
+                Destination.createItemDetailRoute(itemId = seriesId, itemType = "Series")
+            )
+        },
+    )
 }
 
 @Composable
@@ -293,7 +295,7 @@ private fun FavoritePeopleSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp),
         ) {
-            items(people) { person ->
+            items(people, key = { it.id.toString() }) { person ->
                 FavoritePersonCard(
                     person = person,
                     onClick = { onPersonClick(person.id.toString()) },
@@ -358,7 +360,7 @@ private fun FavoriteChannelsSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp),
         ) {
-            items(channels) { channel ->
+            items(channels, key = { it.id.toString() }) { channel ->
                 FavoriteChannelCard(
                     channel = channel,
                     onClick = { onChannelClick(channel) },

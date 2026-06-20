@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import com.makd.afinity.R
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,7 +65,7 @@ fun SleepTimerDialog(
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(24.dp).padding(bottom = 24.dp)) {
             Text(
-                text = "SLEEP TIMER",
+                text = stringResource(R.string.abs_sleep_timer_title),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 modifier = Modifier.fillMaxWidth(),
@@ -114,13 +115,13 @@ fun SleepTimerDialog(
                         ) {
                             Icon(painterResource(id = R.drawable.ic_timer_off), null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Stop Timer")
+                            Text(stringResource(R.string.abs_sleep_timer_stop))
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    "Set New Timer",
+                    stringResource(R.string.abs_sleep_timer_set_new),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -133,7 +134,7 @@ fun SleepTimerDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                items(timerOptions) { minutes ->
+                items(timerOptions, key = { it }) { minutes ->
                     TimerTile(minutes = minutes, onClick = { onTimerSelected(minutes) })
                 }
             }

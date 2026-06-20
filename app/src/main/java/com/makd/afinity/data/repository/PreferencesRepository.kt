@@ -5,10 +5,10 @@ import com.makd.afinity.data.models.common.SortBy
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
-import com.makd.afinity.data.models.player.SegmentAutoSkipMode
+import com.makd.afinity.data.models.player.SkipMode
 import com.makd.afinity.data.models.player.SubtitlePreferences
-import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.player.exoplayer.DecoderPriority
+import com.makd.afinity.data.models.player.VideoZoomMode
 import kotlinx.coroutines.flow.Flow
 
 interface PreferencesRepository {
@@ -51,17 +51,17 @@ interface PreferencesRepository {
 
     suspend fun getMaxBitrate(): Int?
 
-    suspend fun setSkipIntroEnabled(enabled: Boolean)
+    suspend fun setSkipIntroMode(mode: SkipMode)
 
-    suspend fun getSkipIntroEnabled(): Boolean
+    suspend fun getSkipIntroMode(): SkipMode
 
-    fun getSkipIntroEnabledFlow(): Flow<Boolean>
+    fun getSkipIntroModeFlow(): Flow<SkipMode>
 
-    suspend fun setSkipOutroEnabled(enabled: Boolean)
+    suspend fun setSkipOutroMode(mode: SkipMode)
 
-    suspend fun getSkipOutroEnabled(): Boolean
+    suspend fun getSkipOutroMode(): SkipMode
 
-    fun getSkipOutroEnabledFlow(): Flow<Boolean>
+    fun getSkipOutroModeFlow(): Flow<SkipMode>
 
     val useExoPlayer: Flow<Boolean>
 
@@ -78,30 +78,6 @@ interface PreferencesRepository {
     suspend fun setDolbyVisionConversion(value: Boolean)
 
     suspend fun getDolbyVisionConversion(): Boolean
-
-    val cacheForwardSeconds: Flow<Int>
-
-    suspend fun setCacheForwardSeconds(value: Int)
-
-    suspend fun getCacheForwardSeconds(): Int
-
-    val cacheBackSeconds: Flow<Int>
-
-    suspend fun setCacheBackSeconds(value: Int)
-
-    suspend fun getCacheBackSeconds(): Int
-
-    val nextEpisodeThresholdMs: Flow<Int>
-
-    suspend fun setNextEpisodeThresholdMs(value: Int)
-
-    suspend fun getNextEpisodeThresholdMs(): Int
-
-    val segmentAutoSkipMode: Flow<SegmentAutoSkipMode>
-
-    suspend fun setSegmentAutoSkipMode(value: SegmentAutoSkipMode)
-
-    suspend fun getSegmentAutoSkipMode(): SegmentAutoSkipMode
 
     suspend fun setMpvHwDec(hwDec: MpvHwDec)
 
@@ -138,6 +114,12 @@ interface PreferencesRepository {
     suspend fun getThemeMode(): String
 
     fun getThemeModeFlow(): Flow<String>
+
+    suspend fun setAppFont(font: String)
+
+    suspend fun getAppFont(): String
+
+    fun getAppFontFlow(): Flow<String>
 
     suspend fun setImageCacheEnabled(enabled: Boolean)
 
@@ -185,6 +167,8 @@ interface PreferencesRepository {
 
     suspend fun getDownloadOverWifiOnly(): Boolean
 
+    fun getDownloadWifiOnlyFlow(): Flow<Boolean>
+
     suspend fun setDownloadQuality(quality: String)
 
     suspend fun getDownloadQuality(): String
@@ -192,6 +176,14 @@ interface PreferencesRepository {
     suspend fun setMaxDownloads(maxDownloads: Int)
 
     suspend fun getMaxDownloads(): Int
+
+    fun getMaxDownloadsFlow(): Flow<Int>
+
+    suspend fun setDownloadStorageVolumeId(volumeId: String)
+
+    suspend fun getDownloadStorageVolumeId(): String
+
+    fun getDownloadStorageVolumeIdFlow(): Flow<String>
 
     suspend fun setSyncEnabled(enabled: Boolean)
 
@@ -253,6 +245,12 @@ interface PreferencesRepository {
 
     fun getEpisodeLayoutFlow(): Flow<EpisodeLayout>
 
+    suspend fun setShowRatings(enabled: Boolean)
+
+    suspend fun getShowRatings(): Boolean
+
+    fun getShowRatingsFlow(): Flow<Boolean>
+
     suspend fun setNotificationPermissionDeclined(declined: Boolean)
 
     suspend fun getNotificationPermissionDeclined(): Boolean
@@ -268,6 +266,12 @@ interface PreferencesRepository {
     suspend fun getCastMaxBitrate(): Int
 
     fun getCastMaxBitrateFlow(): Flow<Int>
+
+    suspend fun setBufferSizeMb(sizeMb: Int)
+
+    suspend fun getBufferSizeMb(): Int
+
+    fun getBufferSizeMbFlow(): Flow<Int>
 
     suspend fun clearAllPreferences()
 

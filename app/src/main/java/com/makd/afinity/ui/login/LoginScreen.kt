@@ -431,7 +431,7 @@ private fun InsecureConnectionBanner(serverUrl: String) {
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_info),
-                    contentDescription = "Security Warning",
+                    contentDescription = stringResource(R.string.cd_security_warning),
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
@@ -782,7 +782,7 @@ private fun UserSelectionAndTabs(
                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                items(allUsers) { user ->
+                items(allUsers, key = { it.id.toString() }) { user ->
                     val isSelected = uiState.selectedUser?.id == user.id
                     UserAvatarItem(
                         user = user,

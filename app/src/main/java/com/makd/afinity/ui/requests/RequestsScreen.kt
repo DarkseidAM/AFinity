@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -17,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,12 +31,15 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makd.afinity.R
+import com.makd.afinity.data.models.jellyseerr.MediaStatus
 import com.makd.afinity.data.models.jellyseerr.MediaType
 import com.makd.afinity.data.models.jellyseerr.Permissions
 import com.makd.afinity.data.models.jellyseerr.RequestStatus
 import com.makd.afinity.data.models.jellyseerr.hasPermission
 import com.makd.afinity.data.models.jellyseerr.isAdmin
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AfinityTopAppBar
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.components.RequestConfirmationDialog
 import com.makd.afinity.ui.main.MainUiState
 import com.makd.afinity.ui.settings.JellyseerrBottomSheet
@@ -58,6 +61,13 @@ fun RequestsScreen(
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     var showJellyseerrBottomSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val playerOffset = LocalPlayerOffset.current
+
+    LaunchedEffect(Unit) {
+        viewModel.navigateToItem.collect { (jellyfinId, mediaType) ->
+            onItemClick(jellyfinId, mediaType)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -75,6 +85,7 @@ fun RequestsScreen(
                 onSearchClick = onSearchClick,
                 onProfileClick = onProfileClick,
                 userProfileImageUrl = mainUiState.userProfileImageUrl,
+                userName = mainUiState.userName,
             )
         },
         modifier = modifier.fillMaxSize(),
@@ -87,12 +98,7 @@ fun RequestsScreen(
         } else {
             when {
                 uiState.isLoadingDiscover && uiState.trendingItems.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(innerPadding),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                    FullScreenLoading(modifier = Modifier.padding(innerPadding))
                 }
 
                 uiState.error != null &&
@@ -109,15 +115,32 @@ fun RequestsScreen(
                 }
 
                 else -> {
+                    val activeRequests =
+                        uiState.requests.filter { req ->
+                            val statusValue =
+                                if (req.is4k) req.media.status4k ?: 1 else req.media.status ?: 1
+                            val mediaStatus = MediaStatus.fromValue(statusValue)
+                            mediaStatus != MediaStatus.AVAILABLE &&
+                                mediaStatus != MediaStatus.PARTIALLY_AVAILABLE
+                        }
+                    val availableRequests =
+                        uiState.requests.filter { req ->
+                            val statusValue =
+                                if (req.is4k) req.media.status4k ?: 1 else req.media.status ?: 1
+                            val mediaStatus = MediaStatus.fromValue(statusValue)
+                            mediaStatus == MediaStatus.AVAILABLE ||
+                                mediaStatus == MediaStatus.PARTIALLY_AVAILABLE
+                        }
+
                     LazyColumn(
                         modifier = Modifier.fillMaxSize().padding(innerPadding),
-                        contentPadding = PaddingValues(vertical = 16.dp),
+                        contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp + playerOffset),
                         verticalArrangement = Arrangement.spacedBy(24.dp),
                     ) {
-                        if (uiState.requests.isNotEmpty()) {
+                        if (activeRequests.isNotEmpty()) {
                             item {
                                 MyRequestsSection(
-                                    requests = uiState.requests,
+                                    requests = activeRequests,
                                     baseUrl = uiState.jellyseerrUrl,
                                     isAdmin = currentUser?.isAdmin() == true,
                                     onRequestClick = { request ->
@@ -127,6 +150,16 @@ fun RequestsScreen(
                                     },
                                     onApprove = { viewModel.approveRequest(it) },
                                     onDecline = { viewModel.declineRequest(it) },
+                                    widthSizeClass = widthSizeClass,
+                                )
+                            }
+                        }
+
+                        if (availableRequests.isNotEmpty()) {
+                            item {
+                                AvailableRequestsSection(
+                                    requests = availableRequests,
+                                    onRequestClick = { viewModel.resolveAndNavigate(it) },
                                     widthSizeClass = widthSizeClass,
                                 )
                             }

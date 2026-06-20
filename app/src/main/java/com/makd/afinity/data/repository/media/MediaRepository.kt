@@ -1,8 +1,10 @@
 package com.makd.afinity.data.repository.media
 
+import androidx.paging.PagingData
+import com.makd.afinity.data.models.GenreType
 import com.makd.afinity.data.models.common.CollectionType
 import com.makd.afinity.data.models.common.SortBy
-import com.makd.afinity.data.models.mdblist.MdbListRating
+import com.makd.afinity.data.models.mdblist.MdbListRatingsResult
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityCollection
 import com.makd.afinity.data.models.media.AfinityEpisode
@@ -12,6 +14,8 @@ import com.makd.afinity.data.models.media.AfinityPersonDetail
 import com.makd.afinity.data.models.media.AfinitySeason
 import com.makd.afinity.data.models.media.AfinityShow
 import com.makd.afinity.data.models.media.AfinityStudio
+import com.makd.afinity.data.models.omdb.OmdbApiResult
+import com.makd.afinity.ui.library.FilterType
 import kotlinx.coroutines.flow.Flow
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemDtoQueryResult
@@ -19,6 +23,8 @@ import org.jellyfin.sdk.model.api.ItemFields
 import java.util.UUID
 
 interface MediaRepository {
+
+    fun getBaseUrl(): String
 
     val libraries: Flow<List<AfinityCollection>>
     val latestMedia: Flow<List<AfinityItem>>
@@ -45,7 +51,10 @@ interface MediaRepository {
         parentId: UUID? = null,
         limit: Int = 16,
         fields: List<ItemFields>? = null,
+        groupItems: Boolean = true,
     ): List<AfinityItem>
+
+    suspend fun getItemsByIds(ids: List<UUID>): List<AfinityItem>
 
     suspend fun getContinueWatching(
         limit: Int = 16,
@@ -75,7 +84,11 @@ interface MediaRepository {
 
     suspend fun getItem(itemId: UUID, fields: List<ItemFields>? = null): BaseItemDto?
 
+    suspend fun getItemById(itemId: UUID): AfinityItem?
+
     suspend fun getIntros(itemId: UUID): List<AfinityItem>
+
+    suspend fun getAdditionalParts(itemId: UUID): List<AfinityItem>
 
     suspend fun getSimilarItems(
         itemId: UUID,
@@ -163,7 +176,12 @@ interface MediaRepository {
         seriesId: UUID? = null,
         limit: Int = 16,
         fields: List<ItemFields>? = null,
-        enableResumable: Boolean = true,
+        enableResumable: Boolean = false,
+    ): List<AfinityEpisode>
+
+    suspend fun getUpcomingEpisodes(
+        limit: Int = 24,
+        fields: List<ItemFields>? = null,
     ): List<AfinityEpisode>
 
     suspend fun getSpecialFeatures(itemId: UUID, userId: UUID): List<AfinityItem>
@@ -199,11 +217,43 @@ interface MediaRepository {
 
     suspend fun ensureBoxSetCacheBuilt()
 
+    suspend fun getBoxSetsForSpotlight(
+        minChildCount: Int = 3,
+        maxBoxSets: Int = 15,
+    ): List<Pair<AfinityBoxSet, List<AfinityItem>>>
+
+    fun getItemsPaging(
+        parentId: UUID?,
+        libraryType: CollectionType,
+        sortBy: SortBy,
+        sortDescending: Boolean,
+        filter: FilterType,
+        nameStartsWith: String? = null,
+        fields: List<ItemFields>? = null,
+        studioName: String? = null,
+    ): Flow<PagingData<AfinityItem>>
+
     fun getLibrariesFlow(): Flow<List<AfinityCollection>>
 
     fun getLatestMediaFlow(parentId: UUID? = null): Flow<List<AfinityItem>>
 
     fun getContinueWatchingFlow(): Flow<List<AfinityItem>>
 
-    suspend fun getMdbListRatings(tmdbId: String, isMovie: Boolean): List<MdbListRating>
+    suspend fun getMdbListRatings(tmdbId: String, isMovie: Boolean): MdbListRatingsResult
+
+    suspend fun getOmdbDetails(imdbId: String): OmdbApiResult?
+
+    suspend fun getEpisodeToPlay(seriesId: UUID): AfinityEpisode?
+
+    suspend fun getEpisodeToPlayForSeason(seasonId: UUID, seriesId: UUID): AfinityEpisode?
+
+    suspend fun getSeriesNextEpisode(seriesId: UUID): AfinityEpisode?
+
+    suspend fun getTopRatedByGenre(
+        genre: String,
+        type: GenreType,
+        limit: Int = 10,
+    ): List<AfinityItem>
+
+    suspend fun getTopRatedByStudio(studioName: String, limit: Int = 10): List<AfinityItem>
 }

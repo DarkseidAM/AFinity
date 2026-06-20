@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.makd.afinity.R
 import com.makd.afinity.data.models.media.AfinitySource
+import com.makd.afinity.data.storage.StorageVolumeInfo
 
 @Composable
 fun QualitySelectionDialog(
@@ -38,8 +39,16 @@ fun QualitySelectionDialog(
     onSourceSelected: (AfinitySource) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    volumes: List<StorageVolumeInfo> = emptyList(),
+    selectedVolumeId: String? = null,
+    onVolumeSelected: (String) -> Unit = {},
+    onConfirm: (source: AfinitySource, volumeId: String?) -> Unit = { source, _ ->
+        onSourceSelected(source)
+    },
 ) {
-    var selectedSource by remember { mutableStateOf<AfinitySource?>(null) }
+    var selectedSource by
+        remember(sources) { mutableStateOf(sources.singleOrNull()) }
+    val showVolumePicker = volumes.size > 1
 
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
@@ -64,11 +73,91 @@ fun QualitySelectionDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f, fill = false),
                 ) {
-                    items(sources) { source ->
+                    items(sources, key = { it.id }) { source ->
                         QualityOption(
                             source = source,
                             isSelected = selectedSource == source,
                             onSelect = { selectedSource = source },
+                        )
+                    }
+                }
+
+                if (showVolumePicker) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = stringResource(R.string.download_location_section),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        items(volumes, key = { it.id }) { volume ->
+                            VolumeOption(
+                                volume = volume,
+                                isSelected = selectedVolumeId == volume.id,
+                                onSelect = { onVolumeSelected(volume.id) },
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    TextButton(
+                        onClick = {
+                            selectedSource?.let { onConfirm(it, selectedVolumeId) }
+                            onDismiss()
+                        },
+                        enabled = selectedSource != null,
+                    ) {
+                        Text(stringResource(R.string.action_download))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StorageLocationDialog(
+    volumes: List<StorageVolumeInfo>,
+    selectedVolumeId: String?,
+    onVolumeSelected: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = stringResource(R.string.download_location_section),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f, fill = false),
+                ) {
+                    items(volumes, key = { it.id }) { volume ->
+                        VolumeOption(
+                            volume = volume,
+                            isSelected = selectedVolumeId == volume.id,
+                            onSelect = { onVolumeSelected(volume.id) },
                         )
                     }
                 }
@@ -82,14 +171,48 @@ fun QualitySelectionDialog(
 
                     TextButton(
                         onClick = {
-                            selectedSource?.let { onSourceSelected(it) }
+                            onConfirm()
                             onDismiss()
                         },
-                        enabled = selectedSource != null,
+                        enabled = selectedVolumeId != null,
                     ) {
                         Text(stringResource(R.string.action_download))
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VolumeOption(
+    volume: StorageVolumeInfo,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {    Surface(
+        onClick = onSelect,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color =
+            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 0.dp,
+    ) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = volume.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+
+            if (isSelected) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_check),
+                    contentDescription = stringResource(R.string.cd_selected),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }

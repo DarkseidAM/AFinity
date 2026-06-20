@@ -3,12 +3,12 @@ package com.makd.afinity.player.audiobookshelf
 import com.makd.afinity.data.models.audiobookshelf.AudioTrack
 import com.makd.afinity.data.models.audiobookshelf.BookChapter
 import com.makd.afinity.data.models.audiobookshelf.PlaybackSession
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import javax.inject.Inject
+import javax.inject.Singleton
 
 @Singleton
 class AudiobookshelfPlaybackManager @Inject constructor() {
@@ -23,9 +23,11 @@ class AudiobookshelfPlaybackManager @Inject constructor() {
         _currentSession.value = session
 
         val coverUrl =
-            if (serverUrl != null) {
+            if (session.id.startsWith("local_") && session.coverPath != null) {
+                session.coverPath
+            } else if (serverUrl != null) {
                 val base = "$serverUrl/api/items/${session.libraryItemId}/cover"
-                if (token != null) "$base?token=$token" else base
+                if (token != null) "$base?raw=1&token=$token" else "$base?raw=1"
             } else {
                 session.coverPath
             }
@@ -44,10 +46,11 @@ class AudiobookshelfPlaybackManager @Inject constructor() {
             )
     }
 
-    fun updatePosition(currentTime: Double) {
+    fun updatePosition(currentTime: Double, bufferedPosition: Double? = null) {
         _playbackState.value =
             _playbackState.value.copy(
                 currentTime = currentTime,
+                bufferedPosition = bufferedPosition ?: _playbackState.value.bufferedPosition,
                 currentChapter = findCurrentChapter(currentTime),
             )
     }
@@ -71,6 +74,10 @@ class AudiobookshelfPlaybackManager @Inject constructor() {
     fun setPlaylistInfo(episodeIds: List<String>) {
         _playbackState.value =
             _playbackState.value.copy(isPodcastPlaylist = true, playlistEpisodeIds = episodeIds)
+    }
+
+    fun setChapterBasedPlayback(isChapterBased: Boolean) {
+        _playbackState.update { it.copy(isChapterBasedPlayback = isChapterBased) }
     }
 
     fun updateSessionInfo(sessionId: String, episodeId: String?) {
@@ -112,6 +119,7 @@ data class AudiobookshelfPlaybackState(
     val displayAuthor: String? = null,
     val coverUrl: String? = null,
     val currentTime: Double = 0.0,
+    val bufferedPosition: Double = 0.0,
     val duration: Double = 0.0,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
@@ -122,6 +130,7 @@ data class AudiobookshelfPlaybackState(
     val sleepTimerEndTime: Long? = null,
     val isPodcastPlaylist: Boolean = false,
     val playlistEpisodeIds: List<String> = emptyList(),
+    val isChapterBasedPlayback: Boolean = false,
 ) {
     val currentChapterIndex: Int
         get() = currentChapter?.let { chapter -> chapters.indexOf(chapter) } ?: -1

@@ -9,8 +9,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,9 +60,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makd.afinity.R
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.util.isInsecurePublicUrl
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,6 +76,11 @@ fun AddEditServerScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val playerOffset = LocalPlayerOffset.current
+    val duplicateMessage =
+        state.duplicateServerName?.let { name ->
+            stringResource(R.string.address_added_to_existing_server, name)
+        }
 
     LaunchedEffect(state.error) {
         state.error?.let { error ->
@@ -78,9 +90,20 @@ fun AddEditServerScreen(
     }
 
     LaunchedEffect(state.saveSuccess) {
-        if (state.saveSuccess) {
+        if (state.saveSuccess && !state.duplicateServerDetected) {
             onBackClick()
         }
+    }
+
+    if (state.duplicateServerDetected && state.saveSuccess && duplicateMessage != null) {
+        AlertDialog(
+            onDismissRequest = onBackClick,
+            title = { Text(stringResource(R.string.address_added_title)) },
+            text = { Text(duplicateMessage) },
+            confirmButton = {
+                TextButton(onClick = onBackClick) { Text(stringResource(R.string.btn_ok)) }
+            },
+        )
     }
 
     Scaffold(
@@ -101,10 +124,18 @@ fun AddEditServerScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         modifier = modifier.fillMaxSize(),
     ) { paddingValues ->
+        val layoutDirection = LocalLayoutDirection.current
+        val customPadding =
+            PaddingValues(
+                top = paddingValues.calculateTopPadding(),
+                start = paddingValues.calculateStartPadding(layoutDirection),
+                end = paddingValues.calculateEndPadding(layoutDirection),
+                bottom = max(paddingValues.calculateBottomPadding(), playerOffset),
+            )
         Column(
             modifier =
                 Modifier.fillMaxSize()
-                    .padding(paddingValues)
+                    .padding(customPadding)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
                     .imePadding(),
@@ -388,14 +419,13 @@ private fun InsecureConnectionBanner(serverUrl: String) {
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_info),
-                    contentDescription = "Security Warning",
+                    contentDescription = stringResource(R.string.cd_security_warning),
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text =
-                        "Warning: Connecting over HTTP sends your password in plain text. HTTPS is highly recommended.",
+                    text = stringResource(R.string.warning_http_insecure),
                     color = MaterialTheme.colorScheme.onErrorContainer,
                     style = MaterialTheme.typography.bodyMedium,
                 )

@@ -1,32 +1,43 @@
 package com.makd.afinity.ui.livetv
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.makd.afinity.R
 import com.makd.afinity.data.models.livetv.AfinityChannel
 import com.makd.afinity.data.repository.livetv.LiveTvRepository
 import com.makd.afinity.ui.livetv.models.LiveTvCategory
 import com.makd.afinity.ui.livetv.models.ProgramWithChannel
 import dagger.hilt.android.lifecycle.HiltViewModel
-import java.time.LocalDateTime
-import java.time.temporal.ChronoUnit
-import java.util.UUID
-import javax.inject.Inject
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
+import java.util.UUID
+import javax.inject.Inject
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
-class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRepository) :
-    ViewModel() {
+class LiveTvViewModel
+@Inject
+constructor(
+    @param:ApplicationContext private val context: Context,
+    private val liveTvRepository: LiveTvRepository,
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LiveTvUiState())
     val uiState: StateFlow<LiveTvUiState> = _uiState.asStateFlow()
@@ -37,9 +48,15 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
     private var allChannelsCache: List<AfinityChannel> = emptyList()
 
     private var refreshJob: Job? = null
+    private var isScreenVisible = false
+
+    private val tabSwitchTrigger = MutableSharedFlow<LiveTvTab>(extraBufferCapacity = 1)
 
     init {
         checkLiveTvAccess()
+        viewModelScope.launch {
+            tabSwitchTrigger.debounce(200L).collect { tab -> refreshCurrentTabData(tab) }
+        }
     }
 
     fun onLetterSelected(letter: String) {
@@ -90,7 +107,10 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
             } catch (e: Exception) {
                 Timber.e(e, "Failed to check Live TV access")
                 _uiState.update {
-                    it.copy(isLoading = false, error = "Failed to check Live TV access")
+                    it.copy(
+                        isLoading = false,
+                        error = context.getString(R.string.error_failed_check_livetv),
+                    )
                 }
             }
         }
@@ -106,7 +126,12 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
                 _uiState.update { it.copy(epgChannels = channels, isLoading = false) }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to load channels")
-                _uiState.update { it.copy(isLoading = false, error = "Failed to load channels") }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = context.getString(R.string.error_failed_load_channels),
+                    )
+                }
             }
         }
     }
@@ -115,8 +140,12 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isCategoriesLoading = true) }
-                val channels = liveTvRepository.getChannels()
+                val channels = allChannelsCache.ifEmpty {
+                    liveTvRepository.getChannels().also { allChannelsCache = it }
+                }
+
                 val channelsMap = channels.associateBy { it.id }
+
                 val categorizedPrograms =
                     awaitAll(
                         async(Dispatchers.IO) {
@@ -191,10 +220,9 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
 
                     categorized[category] = programsWithChannel
                 }
-                val filteredCategories =
-                    categorized.filter { (category, programs) ->
-                        category == LiveTvCategory.ON_NOW || programs.isNotEmpty()
-                    }
+                val filteredCategories = categorized.filter { (category, programs) ->
+                    category == LiveTvCategory.ON_NOW || programs.isNotEmpty()
+                }
 
                 _uiState.update {
                     it.copy(categorizedPrograms = filteredCategories, isCategoriesLoading = false)
@@ -209,7 +237,9 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
     fun loadEpgData() {
         viewModelScope.launch {
             try {
-                _uiState.update { it.copy(isEpgLoading = true) }
+                if (_uiState.value.epgPrograms.isEmpty()) {
+                    _uiState.update { it.copy(isEpgLoading = true) }
+                }
 
                 val channels =
                     if (allChannelsCache.isNotEmpty()) allChannelsCache
@@ -261,17 +291,7 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
 
     fun selectTab(tab: LiveTvTab) {
         _uiState.update { it.copy(selectedTab = tab) }
-        when (tab) {
-            LiveTvTab.HOME -> loadCategorizedPrograms()
-            LiveTvTab.GUIDE -> loadEpgData()
-            LiveTvTab.CHANNELS -> {
-                if (allChannelsCache.isEmpty()) {
-                    loadChannels()
-                } else {
-                    applyFilterToCache(_selectedLetter.value)
-                }
-            }
-        }
+        tabSwitchTrigger.tryEmit(tab)
     }
 
     fun jumpToNow() {
@@ -287,20 +307,32 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
         loadEpgData()
     }
 
-    private fun startPeriodicRefresh() {
-        refreshJob?.cancel()
-        refreshJob =
-            viewModelScope.launch {
-                while (isActive) {
-                    delay(60000L)
-                    refreshCurrentTabData()
-                }
+    fun setScreenVisibility(isVisible: Boolean) {
+        isScreenVisible = isVisible
+        if (isVisible) {
+            if (allChannelsCache.isNotEmpty()) {
+                viewModelScope.launch { refreshCurrentTabData(_uiState.value.selectedTab) }
             }
+            startPeriodicRefresh()
+        } else {
+            refreshJob?.cancel()
+            refreshJob = null
+        }
     }
 
-    private suspend fun refreshCurrentTabData() {
+    private fun startPeriodicRefresh() {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            while (isActive && isScreenVisible) {
+                delay(60_000L)
+                refreshCurrentTabData(_uiState.value.selectedTab)
+            }
+        }
+    }
+
+    private suspend fun refreshCurrentTabData(tab: LiveTvTab) {
         try {
-            when (_uiState.value.selectedTab) {
+            when (tab) {
                 LiveTvTab.HOME -> loadCategorizedPrograms()
                 LiveTvTab.GUIDE -> loadEpgData()
                 LiveTvTab.CHANNELS -> {
@@ -310,7 +342,7 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
                 }
             }
         } catch (e: Exception) {
-            Timber.w(e, "Failed to refresh tab data")
+            Timber.w(e, "Failed to refresh tab data for $tab")
         }
     }
 
@@ -319,11 +351,10 @@ class LiveTvViewModel @Inject constructor(private val liveTvRepository: LiveTvRe
             try {
                 val success = liveTvRepository.toggleChannelFavorite(channelId)
                 if (success) {
-                    allChannelsCache =
-                        allChannelsCache.map { channel ->
-                            if (channel.id == channelId) channel.copy(favorite = !channel.favorite)
-                            else channel
-                        }
+                    allChannelsCache = allChannelsCache.map { channel ->
+                        if (channel.id == channelId) channel.copy(favorite = !channel.favorite)
+                        else channel
+                    }
                     applyFilterToCache(_selectedLetter.value)
                 }
             } catch (e: Exception) {

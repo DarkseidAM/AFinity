@@ -18,9 +18,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.stringResource
+import com.makd.afinity.R
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.data.models.audiobookshelf.AudiobookshelfSeries
 import com.makd.afinity.data.models.audiobookshelf.LibraryItem
 import com.makd.afinity.ui.audiobookshelf.libraries.components.AudiobookCard
@@ -45,7 +48,7 @@ fun AudiobookshelfSeriesTab(
         seriesList.isEmpty() -> {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "No series found",
+                    text = stringResource(R.string.abs_no_series_found),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -56,8 +59,12 @@ fun AudiobookshelfSeriesTab(
             val cardWidth = widthSizeClass.portraitWidth
             val cardHeight = CardDimensions.calculateHeight(cardWidth, 1f)
             val fixedRowHeight = cardHeight + 8.dp + 20.dp + 18.dp
+            val playerOffset = LocalPlayerOffset.current
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = playerOffset),
+            ) {
                 items(items = seriesList, key = { it.id }) { series ->
                     Column {
                         Spacer(modifier = Modifier.height(24.dp))

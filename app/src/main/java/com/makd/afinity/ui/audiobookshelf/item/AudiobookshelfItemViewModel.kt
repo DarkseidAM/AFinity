@@ -3,21 +3,28 @@ package com.makd.afinity.ui.audiobookshelf.item
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.makd.afinity.data.manager.OfflineModeManager
+import com.makd.afinity.data.models.audiobookshelf.AbsDownloadInfo
+import com.makd.afinity.data.models.audiobookshelf.AudibleRating
 import com.makd.afinity.data.models.audiobookshelf.BookChapter
 import com.makd.afinity.data.models.audiobookshelf.LibraryItem
 import com.makd.afinity.data.models.audiobookshelf.MediaProgress
 import com.makd.afinity.data.models.audiobookshelf.PodcastEpisode
 import com.makd.afinity.data.models.audiobookshelf.SeriesItem
 import com.makd.afinity.data.repository.AudiobookshelfRepository
+import com.makd.afinity.data.repository.PreferencesRepository
+import com.makd.afinity.data.repository.audiobookshelf.AbsDownloadRepository
+import com.makd.afinity.util.NetworkConnectivityMonitor
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import javax.inject.Inject
 
 @HiltViewModel
 class AudiobookshelfItemViewModel
@@ -25,6 +32,10 @@ class AudiobookshelfItemViewModel
 constructor(
     savedStateHandle: SavedStateHandle,
     private val audiobookshelfRepository: AudiobookshelfRepository,
+    private val absDownloadRepository: AbsDownloadRepository,
+    private val offlineModeManager: OfflineModeManager,
+    private val preferencesRepository: PreferencesRepository,
+    private val networkMonitor: NetworkConnectivityMonitor,
 ) : ViewModel() {
 
     val itemId: String = savedStateHandle.get<String>("itemId") ?: ""
@@ -34,6 +45,9 @@ constructor(
 
     private val _item = MutableStateFlow<LibraryItem?>(null)
     val item: StateFlow<LibraryItem?> = _item.asStateFlow()
+
+    private val _audibleRating = MutableStateFlow<AudibleRating?>(null)
+    val audibleRating: StateFlow<AudibleRating?> = _audibleRating.asStateFlow()
 
     val progress: StateFlow<MediaProgress?> =
         audiobookshelfRepository
@@ -46,6 +60,69 @@ constructor(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     val currentConfig = audiobookshelfRepository.currentConfig
+
+    val isOffline: StateFlow<Boolean> =
+        offlineModeManager.isOffline.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            false,
+        )
+
+    val canDownload: StateFlow<Boolean> =
+        preferencesRepository
+            .getDownloadWifiOnlyFlow()
+            .combine(networkMonitor.isOnWifiFlow) { wifiOnly, onWifi -> !wifiOnly || onWifi }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val downloadInfo: StateFlow<AbsDownloadInfo?> =
+        absDownloadRepository
+            .getActiveDownloadsFlow()
+            .combine(absDownloadRepository.getCompletedDownloadsFlow()) { active, completed ->
+                (active + completed).find { it.libraryItemId == itemId && it.episodeId == null }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val episodeDownloadMap: StateFlow<Map<String, AbsDownloadInfo>> =
+        absDownloadRepository
+            .getActiveDownloadsFlow()
+            .combine(absDownloadRepository.getCompletedDownloadsFlow()) { active, completed ->
+                (active + completed)
+                    .filter { it.libraryItemId == itemId && it.episodeId != null }
+                    .associateBy { it.episodeId!! }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    fun startDownload(episodeId: String? = null) {
+        viewModelScope.launch {
+            absDownloadRepository.startDownload(itemId, episodeId).onFailure {
+                Timber.e(it, "Failed to start download")
+            }
+        }
+    }
+
+    fun cancelDownload(episodeId: String? = null) {
+        viewModelScope.launch {
+            val info =
+                if (episodeId == null) downloadInfo.value else episodeDownloadMap.value[episodeId]
+            info?.let {
+                absDownloadRepository.cancelDownload(it.id).onFailure { e ->
+                    Timber.e(e, "Failed to cancel download")
+                }
+            }
+        }
+    }
+
+    fun deleteDownload(episodeId: String? = null) {
+        viewModelScope.launch {
+            val info =
+                if (episodeId == null) downloadInfo.value else episodeDownloadMap.value[episodeId]
+            info?.let {
+                absDownloadRepository.deleteDownload(it.id).onFailure { e ->
+                    Timber.e(e, "Failed to delete download")
+                }
+            }
+        }
+    }
 
     init {
         loadItem()
@@ -70,6 +147,8 @@ constructor(
 
                     if (item.mediaType.lowercase() == "podcast") {
                         audiobookshelfRepository.refreshProgress()
+                    } else {
+                        loadAudibleRating(item)
                     }
 
                     item.media.metadata.series?.let { seriesList ->
@@ -83,6 +162,20 @@ constructor(
                     Timber.e(error, "Failed to load item")
                 },
             )
+        }
+    }
+
+    private fun loadAudibleRating(item: LibraryItem) {
+        viewModelScope.launch {
+            audiobookshelfRepository
+                .getAudibleRating(
+                    itemId = item.id,
+                    asin = item.media.metadata.asin,
+                    title = item.media.metadata.title ?: return@launch,
+                    authorName = item.media.metadata.authorName,
+                )
+                .onSuccess { rating -> _audibleRating.value = rating }
+                .onFailure { e -> Timber.w(e, "Audible rating fetch failed") }
         }
     }
 

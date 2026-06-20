@@ -2,8 +2,8 @@ package com.makd.afinity.ui.watchlist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.makd.afinity.data.manager.PlaybackEvent
-import com.makd.afinity.data.manager.PlaybackStateManager
+import com.makd.afinity.data.manager.AdminChangeBroadcaster
+import com.makd.afinity.data.manager.MediaChangeManager
 import com.makd.afinity.data.models.download.DownloadInfo
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityEpisode
@@ -14,39 +14,50 @@ import com.makd.afinity.data.models.media.AfinityShow
 import com.makd.afinity.data.models.media.toAfinityEpisode
 import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.FieldSets
-import com.makd.afinity.data.repository.JellyfinRepository
+import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.data.repository.download.DownloadRepository
 import com.makd.afinity.data.repository.media.MediaRepository
 import com.makd.afinity.data.repository.userdata.UserDataRepository
 import com.makd.afinity.data.repository.watchlist.WatchlistRepository
-import com.makd.afinity.ui.item.delegates.ItemDownloadDelegate
 import com.makd.afinity.ui.item.delegates.ItemUserDataDelegate
+import com.makd.afinity.util.NetworkConnectivityMonitor
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class WatchlistViewModel
 @Inject
 constructor(
-    private val jellyfinRepository: JellyfinRepository,
     private val watchlistRepository: WatchlistRepository,
     private val userDataRepository: UserDataRepository,
     private val downloadRepository: DownloadRepository,
     private val appDataRepository: AppDataRepository,
     private val mediaRepository: MediaRepository,
-    private val playbackStateManager: PlaybackStateManager,
+    private val adminChangeBroadcaster: AdminChangeBroadcaster,
+    private val mediaChangeManager: MediaChangeManager,
     private val itemUserDataDelegate: ItemUserDataDelegate,
-    private val itemDownloadDelegate: ItemDownloadDelegate,
+    private val preferencesRepository: PreferencesRepository,
+    private val networkMonitor: NetworkConnectivityMonitor,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(WatchlistUiState())
+    private var lastWatchlistLoadedAt = 0L
+
+    val canDownload: StateFlow<Boolean> =
+        preferencesRepository
+            .getDownloadWifiOnlyFlow()
+            .combine(networkMonitor.isOnWifiFlow) { wifiOnly, onWifi -> !wifiOnly || onWifi }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
 
     private val _selectedEpisode = MutableStateFlow<AfinityEpisode?>(null)
@@ -65,67 +76,45 @@ constructor(
 
     init {
         viewModelScope.launch {
-            appDataRepository.isInitialDataLoaded.collect { isLoaded ->
-                if (isLoaded) {
-                    loadWatchlist()
-                } else {
-                    _uiState.value = WatchlistUiState()
-                    clearSelectedEpisode()
-                }
+            adminChangeBroadcaster.itemChanged.collect { loadWatchlist() }
+        }
+
+        viewModelScope.launch {
+            appDataRepository.watchlistData.collect { data ->
+                _uiState.value =
+                    WatchlistUiState(
+                        boxSets = data.boxSets,
+                        movies = data.movies,
+                        shows = data.shows,
+                        seasons = data.seasons,
+                        episodes = data.episodes,
+                        isLoading = false,
+                        error = null,
+                    )
+                lastWatchlistLoadedAt = System.currentTimeMillis()
             }
         }
-        viewModelScope.launch {
-            playbackStateManager.playbackEvents.collect { event ->
-                if (event is PlaybackEvent.Synced) {
-                    loadWatchlist()
-                    _selectedEpisode.value?.let { ep ->
-                        if (ep.id == event.itemId) {
-                            val refreshedEp =
-                                jellyfinRepository.getItemById(event.itemId) as? AfinityEpisode
-                            refreshedEp?.let { _selectedEpisode.value = it }
-                        }
-                    }
-                }
+    }
+
+    fun onScreenResumed() {
+        if (appDataRepository.lastUserDataChangedAt.value > lastWatchlistLoadedAt) {
+            viewModelScope.launch {
+                appDataRepository.reloadWatchlist()
+                lastWatchlistLoadedAt = System.currentTimeMillis()
             }
         }
     }
 
     fun loadWatchlist() {
         viewModelScope.launch {
-            try {
-                _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-
-                coroutineScope {
-                    val boxSetsDeferred = async { watchlistRepository.getWatchlistBoxSets() }
-                    val moviesDeferred = async { watchlistRepository.getWatchlistMovies() }
-                    val showsDeferred = async { watchlistRepository.getWatchlistShows() }
-                    val seasonsDeferred = async { watchlistRepository.getWatchlistSeasons() }
-                    val episodesDeferred = async { watchlistRepository.getWatchlistEpisodes() }
-
-                    val boxSets = boxSetsDeferred.await()
-                    val movies = moviesDeferred.await()
-                    val shows = showsDeferred.await()
-                    val seasons = seasonsDeferred.await()
-                    val episodes = episodesDeferred.await()
-
-                    _uiState.value =
-                        _uiState.value.copy(
-                            isLoading = false,
-                            boxSets = boxSets.sortedBy { it.name },
-                            movies = movies.sortedBy { it.name },
-                            shows = shows.sortedBy { it.name },
-                            seasons = seasons.sortedBy { it.name },
-                            episodes = episodes.sortedBy { it.name },
-                            error = null,
-                        )
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load watchlist")
-                _uiState.value =
-                    _uiState.value.copy(
-                        isLoading = false,
-                        error = "Failed to load watchlist: ${e.message}",
-                    )
+            val currentData = _uiState.value
+            val hasData =
+                currentData.movies.isNotEmpty() ||
+                    currentData.shows.isNotEmpty() ||
+                    currentData.episodes.isNotEmpty() ||
+                    currentData.boxSets.isNotEmpty()
+            if (!hasData) {
+                appDataRepository.reloadWatchlist()
             }
         }
     }
@@ -140,9 +129,9 @@ constructor(
                 _isLoadingEpisode.value = true
 
                 val fullEpisode =
-                    jellyfinRepository
+                    mediaRepository
                         .getItem(episode.id, fields = FieldSets.ITEM_DETAIL)
-                        ?.toAfinityEpisode(jellyfinRepository, null)
+                        ?.toAfinityEpisode(mediaRepository.getBaseUrl(), null)
 
                 _selectedEpisode.value = fullEpisode ?: episode
 
@@ -181,7 +170,6 @@ constructor(
             updateOptimisticUI = {
                 _selectedEpisodeWatchlistStatus.value = !isLiked
                 _selectedEpisode.value = _selectedEpisode.value?.copy(liked = !isLiked)
-                loadWatchlist()
             },
             revertUI = {
                 _selectedEpisodeWatchlistStatus.value = isLiked
@@ -192,45 +180,19 @@ constructor(
 
     fun toggleEpisodeWatched(episode: AfinityEpisode) {
         viewModelScope.launch {
-            try {
-                val isNowPlayed = !episode.played
-                _selectedEpisode.value =
-                    episode.copy(played = isNowPlayed, playbackPositionTicks = 0)
-
-                val success =
-                    if (episode.played) {
-                        userDataRepository.markUnwatched(episode.id)
-                    } else {
-                        userDataRepository.markWatched(episode.id)
-                    }
-
-                if (success) {
-                    mediaRepository.refreshItemUserData(episode.id, FieldSets.REFRESH_USER_DATA)
-                    playbackStateManager.notifyItemChanged(episode.id)
-                    mediaRepository.invalidateNextUpCache()
+            val isNowPlayed = !episode.played
+            _selectedEpisode.value = episode.copy(played = isNowPlayed, playbackPositionTicks = 0)
+            val success =
+                if (episode.played) {
+                    userDataRepository.markUnwatched(episode.id)
                 } else {
-                    _selectedEpisode.value = episode
+                    userDataRepository.markWatched(episode.id)
                 }
-            } catch (e: Exception) {
-                Timber.e(e, "Error toggling episode watched status")
+            if (!success) {
+                _selectedEpisode.value = episode
             }
         }
     }
-
-    fun onDownloadClick() {
-        _selectedEpisode.value?.let { episode ->
-            itemDownloadDelegate.onDownloadClick(viewModelScope, episode) {}
-        }
-    }
-
-    fun pauseDownload() =
-        itemDownloadDelegate.pauseDownload(viewModelScope, _selectedEpisodeDownloadInfo.value)
-
-    fun resumeDownload() =
-        itemDownloadDelegate.resumeDownload(viewModelScope, _selectedEpisodeDownloadInfo.value)
-
-    fun cancelDownload() =
-        itemDownloadDelegate.cancelDownload(viewModelScope, _selectedEpisodeDownloadInfo.value)
 }
 
 data class WatchlistUiState(

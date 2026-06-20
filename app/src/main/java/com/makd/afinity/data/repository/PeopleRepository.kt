@@ -5,16 +5,20 @@ import com.makd.afinity.data.database.AfinityDatabase
 import com.makd.afinity.data.database.AfinityTypeConverters
 import com.makd.afinity.data.database.entities.PersonSectionCacheEntity
 import com.makd.afinity.data.database.entities.TopPeopleCacheEntity
+import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.CachedPersonWithCount
 import com.makd.afinity.data.models.PersonSection
 import com.makd.afinity.data.models.PersonSectionType
 import com.makd.afinity.data.models.PersonWithCount
 import com.makd.afinity.data.models.common.SortBy
+import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinityMovie
 import com.makd.afinity.data.models.media.AfinityPerson
 import com.makd.afinity.data.models.media.AfinityPersonImage
 import com.makd.afinity.data.models.media.AfinityShow
+import com.makd.afinity.data.models.media.withBaseUrl
+import com.makd.afinity.data.repository.media.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -28,7 +32,11 @@ import kotlin.time.Duration.Companion.hours
 @Singleton
 class PeopleRepository
 @Inject
-constructor(private val jellyfinRepository: JellyfinRepository, database: AfinityDatabase) {
+constructor(
+    private val mediaRepository: MediaRepository,
+    private val sessionManager: SessionManager,
+    database: AfinityDatabase,
+) {
     private val personCacheTTL = 48.hours.inWholeMilliseconds
     private val peopleCacheTTL = 24.hours.inWholeMilliseconds
 
@@ -37,32 +45,46 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
     private val afinityTypeConverters = AfinityTypeConverters()
     private val json = Json { ignoreUnknownKeys = true }
 
+    private fun currentServerId(): String = sessionManager.currentSession.value?.serverId ?: ""
+
+    private fun currentUserId(): String =
+        sessionManager.currentSession.value?.userId?.toString() ?: ""
+
     suspend fun getTopPeople(
         type: PersonKind,
         limit: Int = 100,
         minAppearances: Int = 10,
     ): List<PersonWithCount> {
         try {
-            val cached = topPeopleDao.getCachedTopPeople(type.name)
+            val serverId = currentServerId()
+            val userId = currentUserId()
+            val cached = topPeopleDao.getCachedTopPeople(type.name, serverId, userId)
             val currentTime = System.currentTimeMillis()
 
             if (
                 cached != null &&
-                    topPeopleDao.isTopPeopleCacheFresh(type.name, peopleCacheTTL, currentTime)
+                    topPeopleDao.isTopPeopleCacheFresh(
+                        type.name,
+                        serverId,
+                        userId,
+                        peopleCacheTTL,
+                        currentTime,
+                    )
             ) {
                 val cachedData =
                     json.decodeFromString<List<CachedPersonWithCount>>(cached.peopleData)
-                return cachedData.map { PersonWithCount.fromCached(it) }
+                val baseUrl = mediaRepository.getBaseUrl()
+                return cachedData.map { PersonWithCount.fromCached(it, baseUrl) }
             }
 
             Timber.d("Fetching top ${type.name}...")
-            val baseUrl = jellyfinRepository.getBaseUrl()
+            val baseUrl = mediaRepository.getBaseUrl()
 
             val scanLimit = 150
             val peopleFrequency = mutableMapOf<String, Pair<AfinityPerson, Int>>()
 
             val moviesResponse =
-                jellyfinRepository.getItems(
+                mediaRepository.getItems(
                     includeItemTypes = listOf("Movie"),
                     fields = listOf(ItemFields.PEOPLE),
                     limit = scanLimit,
@@ -82,15 +104,14 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
                             val id = personDto.id
                             val primaryTag = personDto.primaryImageTag
 
-                            val imageUri =
-                                primaryTag?.let { tag ->
-                                    baseUrl
-                                        .toUri()
-                                        .buildUpon()
-                                        .appendEncodedPath("Items/$id/Images/Primary")
-                                        .appendQueryParameter("tag", tag)
-                                        .build()
-                                }
+                            val imageUri = primaryTag?.let { tag ->
+                                baseUrl
+                                    .toUri()
+                                    .buildUpon()
+                                    .appendEncodedPath("Items/$id/Images/Primary")
+                                    .appendQueryParameter("tag", tag)
+                                    .build()
+                            }
 
                             val afinityPerson =
                                 AfinityPerson(
@@ -122,6 +143,8 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
                 val entity =
                     TopPeopleCacheEntity(
                         personType = type.name,
+                        serverId = serverId,
+                        userId = userId,
                         peopleData = json.encodeToString(cachedData),
                         cachedTimestamp = System.currentTimeMillis(),
                     )
@@ -140,24 +163,41 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
         sectionType: PersonSectionType,
     ): PersonSection? {
         try {
+            val serverId = currentServerId()
+            val userId = currentUserId()
             val person = personWithCount.person
             val cacheKey = "${person.name}_${sectionType.name}"
 
-            val cached = personSectionDao.getCachedSection(cacheKey)
+            val cached = personSectionDao.getCachedSection(cacheKey, serverId, userId)
             val currentTime = System.currentTimeMillis()
 
             if (
                 cached != null &&
-                    personSectionDao.isSectionCacheFresh(cacheKey, personCacheTTL, currentTime)
+                    personSectionDao.isSectionCacheFresh(
+                        cacheKey,
+                        serverId,
+                        userId,
+                        personCacheTTL,
+                        currentTime,
+                    )
             ) {
+                val baseUrl = mediaRepository.getBaseUrl()
                 val cachedPersonData =
                     PersonWithCount.fromCached(
-                        json.decodeFromString<CachedPersonWithCount>(cached.personData)
+                        json.decodeFromString<CachedPersonWithCount>(cached.personData),
+                        baseUrl,
                     )
                 val cachedItems =
-                    json.decodeFromString<List<String>>(cached.itemsData).mapNotNull {
-                        afinityTypeConverters.toAfinityItem(it)
+                    json.decodeFromString<List<String>>(cached.itemsData).mapNotNull { itemJson ->
+                        when (val item = afinityTypeConverters.toAfinityItem(itemJson)) {
+                            is AfinityMovie -> item.copy(images = item.images.withBaseUrl(baseUrl))
+                            is AfinityShow -> item.copy(images = item.images.withBaseUrl(baseUrl))
+                            is AfinityEpisode ->
+                                item.copy(images = item.images.withBaseUrl(baseUrl))
+                            else -> item
+                        }
                     }
+
                 return PersonSection(
                     person = cachedPersonData.person,
                     appearanceCount = cachedPersonData.appearanceCount,
@@ -167,7 +207,7 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
             }
 
             val filteredItems =
-                jellyfinRepository.getPersonItems(
+                mediaRepository.getPersonItems(
                     personId = person.id,
                     includeItemTypes = listOf("MOVIE", "SERIES"),
                     personTypes = listOf(sectionType.toPersonKind().serialName),
@@ -186,11 +226,14 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
                     sectionType = sectionType,
                 )
 
-            val itemJsonStrings =
-                selectedItems.mapNotNull { afinityTypeConverters.fromAfinityItem(it) }
+            val itemJsonStrings = selectedItems.mapNotNull {
+                afinityTypeConverters.fromAfinityItem(it)
+            }
             val entity =
                 PersonSectionCacheEntity(
                     cacheKey = cacheKey,
+                    serverId = serverId,
+                    userId = userId,
                     personData = json.encodeToString(personWithCount.toCached()),
                     itemsData = json.encodeToString(itemJsonStrings),
                     sectionType = sectionType.name,
@@ -208,6 +251,8 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
     suspend fun updateItemInCaches(updatedItem: AfinityItem) {
         withContext(Dispatchers.IO) {
             try {
+                val serverId = currentServerId()
+                val userId = currentUserId()
                 val updatedJson =
                     when (updatedItem) {
                         is AfinityMovie -> afinityTypeConverters.fromAfinityMovie(updatedItem)
@@ -215,20 +260,19 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
                         else -> null
                     }
                 if (updatedJson != null) {
-                    val allSections = personSectionDao.getAllCachedSections()
+                    val allSections = personSectionDao.getAllCachedSections(serverId, userId)
                     for (section in allSections) {
                         val itemStrings = json.decodeFromString<List<String>>(section.itemsData)
                         var changed = false
-                        val newItemStrings =
-                            itemStrings.map { itemJson ->
-                                val existing = afinityTypeConverters.toAfinityItem(itemJson)
-                                if (existing?.id == updatedItem.id) {
-                                    changed = true
-                                    updatedJson
-                                } else {
-                                    itemJson
-                                }
+                        val newItemStrings = itemStrings.map { itemJson ->
+                            val existing = afinityTypeConverters.toAfinityItem(itemJson)
+                            if (existing?.id == updatedItem.id) {
+                                changed = true
+                                updatedJson
+                            } else {
+                                itemJson
                             }
+                        }
                         if (changed) {
                             personSectionDao.insertSection(
                                 section.copy(itemsData = json.encodeToString(newItemStrings))

@@ -1,9 +1,10 @@
 package com.makd.afinity.data.models.media
 
 import com.makd.afinity.data.database.dao.ServerDatabaseDao
+import com.makd.afinity.data.models.extensions.toAfinityImages
+import com.makd.afinity.data.models.extensions.toAfinityPerson
 import com.makd.afinity.data.models.mdblist.MdbListRating
 import com.makd.afinity.data.models.tmdb.TmdbReview
-import com.makd.afinity.data.repository.JellyfinRepository
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.PlayAccess
 import java.time.LocalDateTime
@@ -43,14 +44,15 @@ data class AfinityMovie(
     override val externalUrls: List<AfinityExternalUrl>?,
     val tmdbReviews: List<TmdbReview> = emptyList(),
     val mdbRatings: List<MdbListRating> = emptyList(),
+    val partCount: Int? = null,
 ) : AfinityItem, AfinitySources
 
 suspend fun BaseItemDto.toAfinityMovie(
-    jellyfinRepository: JellyfinRepository,
+    baseUrl: String,
     serverDatabase: ServerDatabaseDao? = null,
 ): AfinityMovie {
     val sources = mutableListOf<AfinitySource>()
-    sources.addAll(mediaSources?.map { it.toAfinitySource(jellyfinRepository, id) } ?: emptyList())
+    sources.addAll(mediaSources?.map { it.toAfinitySource(baseUrl, id) } ?: emptyList())
     if (serverDatabase != null) {
         sources.addAll(serverDatabase.getSources(id).map { it.toAfinitySource(serverDatabase) })
     }
@@ -72,14 +74,14 @@ suspend fun BaseItemDto.toAfinityMovie(
         communityRating = communityRating,
         criticRating = criticRating,
         genres = genres ?: emptyList(),
-        people = people?.map { it.toAfinityPerson(jellyfinRepository) } ?: emptyList(),
+        people = people?.map { it.toAfinityPerson(baseUrl) } ?: emptyList(),
         officialRating = officialRating,
         status = status ?: "Ended",
         productionYear = productionYear,
         tagline = taglines?.firstOrNull(),
         endDate = endDate,
         trailer = remoteTrailers?.getOrNull(0)?.url,
-        images = toAfinityImages(jellyfinRepository),
+        images = toAfinityImages(baseUrl),
         chapters = toAfinityChapters(),
         trickplayInfo =
             trickplay?.mapValues { it.value[it.value.keys.max()]!!.toAfinityTrickplayInfo() },
@@ -87,5 +89,6 @@ suspend fun BaseItemDto.toAfinityMovie(
         externalUrls = externalUrls?.map { it.toAfinityExternalUrl() },
         tmdbReviews = emptyList(),
         mdbRatings = emptyList(),
+        partCount = partCount,
     )
 }

@@ -96,6 +96,8 @@ interface SecurePreferencesRepository {
 
     fun getCachedJellyseerrServerUrl(): String?
 
+    fun updateCachedJellyseerrServerUrl(url: String)
+
     fun getCachedJellyseerrCookie(): String?
 
     suspend fun saveJellyseerrCookie(cookie: String)
@@ -127,6 +129,8 @@ interface SecurePreferencesRepository {
 
     fun getCachedAudiobookshelfServerUrl(): String?
 
+    fun updateCachedAudiobookshelfServerUrl(url: String)
+
     fun getCachedAudiobookshelfToken(): String?
 
     fun getCachedAudiobookshelfRefreshToken(): String?
@@ -143,7 +147,19 @@ interface SecurePreferencesRepository {
 
     suspend fun getMdbListApiKey(serverId: String, userId: String): String?
 
+    suspend fun saveOmdbApiKey(serverId: String, userId: String, apiKey: String)
+
+    suspend fun getOmdbApiKey(serverId: String, userId: String): String?
+
     var onAbsAuthInvalidated: (() -> Unit)?
+
+    fun getCachedJellyfinToken(): String?
+
+    fun getCachedJellyfinServerUrl(): String?
+
+    suspend fun saveActiveSession(serverId: String, userId: UUID, serverUrl: String)
+
+    suspend fun clearActiveSession()
 }
 
 data class AudiobookshelfAuthData(

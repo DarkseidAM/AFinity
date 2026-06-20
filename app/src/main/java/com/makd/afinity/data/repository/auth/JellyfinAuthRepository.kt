@@ -2,15 +2,10 @@ package com.makd.afinity.data.repository.auth
 
 import com.makd.afinity.core.AppConstants
 import com.makd.afinity.data.manager.SessionManager
-import org.jellyfin.sdk.Jellyfin
 import com.makd.afinity.data.models.auth.QuickConnectState
 import com.makd.afinity.data.models.user.User
 import com.makd.afinity.data.repository.DatabaseRepository
 import com.makd.afinity.data.repository.SecurePreferencesRepository
-import com.makd.afinity.util.NetworkConnectivityMonitor
-import java.util.UUID
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,7 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import org.jellyfin.sdk.Jellyfin
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.exception.ApiClientException
 import org.jellyfin.sdk.api.client.exception.InvalidStatusException
@@ -32,6 +27,9 @@ import org.jellyfin.sdk.model.api.ClientCapabilitiesDto
 import org.jellyfin.sdk.model.api.GeneralCommandType
 import org.jellyfin.sdk.model.api.MediaType
 import timber.log.Timber
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
 
 @Singleton
 class JellyfinAuthRepository
@@ -40,16 +38,13 @@ constructor(
     private val jellyfin: Jellyfin,
     private val sessionManager: SessionManager,
     private val securePreferencesRepository: SecurePreferencesRepository,
-    private val networkConnectivityMonitor: NetworkConnectivityMonitor,
     private val databaseRepository: DatabaseRepository,
 ) : AuthRepository {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override val currentUser: StateFlow<User?> by lazy {
-        sessionManager.currentSession
-            .map { it?.user }
-            .stateIn(scope, SharingStarted.Eagerly, null)
+        sessionManager.currentSession.map { it?.user }.stateIn(scope, SharingStarted.Eagerly, null)
     }
 
     override val isAuthenticated: StateFlow<Boolean> by lazy {
@@ -62,12 +57,12 @@ constructor(
         Timber.d("AuthRepository initialized")
     }
 
-    override suspend fun restoreAuthenticationState(): Boolean {
+    override suspend fun restoreAuthenticationState(): AuthRepository.RestoreResult {
         return withContext(Dispatchers.IO) {
             try {
                 if (!securePreferencesRepository.hasValidAuthData()) {
                     Timber.d("No valid encrypted auth data found, user needs to login")
-                    return@withContext false
+                    return@withContext AuthRepository.RestoreResult.Failed
                 }
 
                 val accessToken = securePreferencesRepository.getAccessToken()
@@ -86,7 +81,7 @@ constructor(
                         "Incomplete encrypted auth data found, clearing and requiring fresh login"
                     )
                     clearAllAuthData()
-                    return@withContext false
+                    return@withContext AuthRepository.RestoreResult.Failed
                 }
 
                 val userUuid =
@@ -95,87 +90,37 @@ constructor(
                     } catch (e: IllegalArgumentException) {
                         Timber.e(e, "Invalid UUID format in saved data")
                         clearAllAuthData()
-                        return@withContext false
+                        return@withContext AuthRepository.RestoreResult.Failed
                     }
 
-                val user =
-                    User(
-                        id = userUuid,
-                        name = username,
-                        serverId = serverId ?: "",
-                        accessToken = accessToken,
-                        primaryImageTag = null,
-                    )
+                val startResult = sessionManager.startSession(
+                    serverUrl = serverUrl,
+                    serverId = serverId ?: "",
+                    userId = userUuid,
+                    accessToken = accessToken,
+                )
 
-                sessionManager
-                    .startSession(
-                        serverUrl = serverUrl,
-                        serverId = serverId ?: "",
-                        userId = userUuid,
-                        accessToken = accessToken,
-                    )
-                    .onFailure { e ->
-                        Timber.w(e, "SessionManager start failed during restore (non-fatal)")
-                    }
-
-                Timber.d("Optimistically restored session for user: $username")
-
-                val isConnected = networkConnectivityMonitor.isCurrentlyConnected()
-                if (!isConnected) {
-                    Timber.d("Device offline - keeping optimistic session")
-                    return@withContext true
-                }
-
-                try {
-                    val response =
-                        withTimeoutOrNull(5000L) {
-                            val client = sessionManager.getCurrentApiClient()
-                                ?: jellyfin.createApi(baseUrl = serverUrl).also {
-                                    it.update(accessToken = accessToken)
-                                }
-                            val userApi = UserApi(client)
-                            userApi.getCurrentUser()
-                        }
-
-                    val userDto = response?.content
-                    if (userDto != null) {
-                        val updatedUser = user.copy(primaryImageTag = userDto.primaryImageTag)
-                        sessionManager.updateCurrentUser(updatedUser)
-                        try {
-                            databaseRepository.insertUser(updatedUser)
-                        } catch (_: Exception) {
-                            Timber.w("Failed to update user in DB during restore")
-                        }
-
-                        Timber.d(
-                            "Session validated with server successfully (ImageTag: ${updatedUser.primaryImageTag})"
-                        )
-                        return@withContext true
-                    } else {
-                        Timber.w(
-                            "Server validation timed out - keeping optimistic session (assuming server reachable but slow)"
-                        )
-                        return@withContext true
-                    }
-                } catch (e: InvalidStatusException) {
-                    if (e.status == 401) {
+                val startFailure = startResult.exceptionOrNull()
+                if (startFailure != null) {
+                    val is401 = startFailure is InvalidStatusException && startFailure.status == 401
+                        || startFailure.message?.contains("401") == true
+                    if (is401) {
                         Timber.e("Token rejected by server (401) - Logging out")
                         clearAllAuthData()
-                        return@withContext false
+                        return@withContext AuthRepository.RestoreResult.Failed
                     }
-
-                    Timber.w("Server returned error ${e.status} - keeping optimistic session")
-                    return@withContext true
-                } catch (e: ApiClientException) {
-                    Timber.w(e, "ApiClient error during validation - keeping optimistic session")
-                    return@withContext true
-                } catch (e: Exception) {
-                    Timber.e(e, "Unexpected error during validation - keeping optimistic session")
-                    return@withContext true
+                    Timber.w(startFailure, "SessionManager start failed during restore (server unreachable)")
+                    return@withContext AuthRepository.RestoreResult.Degraded(startFailure)
                 }
+
+                Timber.d("Session restored for user: $username (url: $serverUrl)")
+                sessionManager.getCurrentApiClient()?.let { client ->
+                    scope.launch { registerClientCapabilities(client) }
+                }
+                return@withContext AuthRepository.RestoreResult.Success
             } catch (e: Exception) {
                 Timber.e(e, "Critical error during auth restoration")
-                return@withContext false
+                return@withContext AuthRepository.RestoreResult.Failed
             }
         }
     }
@@ -277,7 +222,10 @@ constructor(
         }
     }
 
-    override suspend fun getQuickConnectState(serverUrl: String, secret: String): QuickConnectState? {
+    override suspend fun getQuickConnectState(
+        serverUrl: String,
+        secret: String,
+    ): QuickConnectState? {
         return withContext(Dispatchers.IO) {
             try {
                 val client = jellyfin.createApi(baseUrl = serverUrl)
@@ -294,6 +242,22 @@ constructor(
             } catch (e: Exception) {
                 Timber.e(e, "Unexpected error getting QuickConnect state")
                 null
+            }
+        }
+    }
+
+    override suspend fun authorizeQuickConnect(code: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val apiClient = sessionManager.getCurrentApiClient() ?: return@withContext false
+                val quickConnectApi = QuickConnectApi(apiClient)
+                quickConnectApi.authorizeQuickConnect(code = code).content
+            } catch (e: ApiClientException) {
+                Timber.e(e, "QuickConnect authorization failed")
+                false
+            } catch (e: Exception) {
+                Timber.e(e, "Unexpected error during QuickConnect authorization")
+                false
             }
         }
     }
@@ -322,6 +286,7 @@ constructor(
                     serverId = "",
                     accessToken = client.accessToken,
                     primaryImageTag = userDto.primaryImageTag,
+                    isAdmin = userDto.policy?.isAdministrator == true,
                 )
             } catch (e: ApiClientException) {
                 Timber.e(e, "Failed to get current user")
@@ -345,6 +310,7 @@ constructor(
                         serverId = "",
                         accessToken = null,
                         primaryImageTag = userDto.primaryImageTag,
+                        isAdmin = userDto.policy?.isAdministrator == true,
                     )
                 }
             } catch (e: ApiClientException) {
@@ -373,6 +339,7 @@ constructor(
                         serverId = authResult.serverId ?: "",
                         accessToken = token,
                         primaryImageTag = userDto.primaryImageTag,
+                        isAdmin = userDto.policy?.isAdministrator == true,
                     )
 
                 try {
@@ -393,22 +360,18 @@ constructor(
             val sessionApi = SessionApi(client)
             val capabilities =
                 ClientCapabilitiesDto(
-                    playableMediaTypes = listOf(MediaType.VIDEO),
+                    playableMediaTypes = listOf(MediaType.VIDEO, MediaType.AUDIO),
                     supportedCommands =
                         listOf(
                             GeneralCommandType.VOLUME_UP,
                             GeneralCommandType.VOLUME_DOWN,
                             GeneralCommandType.TOGGLE_MUTE,
-                            GeneralCommandType.SET_AUDIO_STREAM_INDEX,
-                            GeneralCommandType.SET_SUBTITLE_STREAM_INDEX,
                             GeneralCommandType.MUTE,
                             GeneralCommandType.UNMUTE,
                             GeneralCommandType.SET_VOLUME,
+                            GeneralCommandType.SET_AUDIO_STREAM_INDEX,
+                            GeneralCommandType.SET_SUBTITLE_STREAM_INDEX,
                             GeneralCommandType.DISPLAY_MESSAGE,
-                            GeneralCommandType.PLAY,
-                            GeneralCommandType.PLAY_STATE,
-                            GeneralCommandType.PLAY_NEXT,
-                            GeneralCommandType.PLAY_MEDIA_SOURCE,
                         ),
                     supportsMediaControl = true,
                     supportsPersistentIdentifier = true,
@@ -425,5 +388,4 @@ constructor(
             Timber.e(e, "Unexpected error registering client capabilities")
         }
     }
-
 }

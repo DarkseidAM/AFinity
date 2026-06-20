@@ -1,16 +1,19 @@
 package com.makd.afinity.data.manager
 
 import com.makd.afinity.data.models.media.AfinityEpisode
+import com.makd.afinity.data.repository.AppDataRepository
 import com.makd.afinity.data.repository.FieldSets
 import com.makd.afinity.data.repository.media.MediaRepository
 import com.makd.afinity.data.repository.playback.PlaybackRepository
 import com.makd.afinity.data.sync.UserDataSyncScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
@@ -21,8 +24,11 @@ class PlaybackStateManager
 @Inject
 constructor(
     private val mediaRepository: MediaRepository,
+    private val appDataRepository: AppDataRepository,
     private val playbackRepository: PlaybackRepository,
     private val syncScheduler: UserDataSyncScheduler,
+    private val mediaChangeManager: MediaChangeManager,
+    private val mediaRefreshBus: MediaRefreshBus,
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -33,15 +39,22 @@ constructor(
     @Volatile private var currentSessionId: String? = null
     @Volatile private var lastKnownPosition: Long = 0L
     @Volatile private var lastKnownMediaSourceId: String? = null
+    @Volatile private var lastKnownLiveStreamId: String? = null
 
     fun trackCurrentItem(itemId: UUID) {
         currentItemId = itemId
     }
 
-    fun trackPlaybackSession(sessionId: String, itemId: UUID, mediaSourceId: String) {
+    fun trackPlaybackSession(
+        sessionId: String,
+        itemId: UUID,
+        mediaSourceId: String,
+        liveStreamId: String? = null,
+    ) {
         currentSessionId = sessionId
         currentItemId = itemId
         lastKnownMediaSourceId = mediaSourceId
+        lastKnownLiveStreamId = liveStreamId
     }
 
     fun updatePlaybackPosition(positionMs: Long) {
@@ -51,16 +64,25 @@ constructor(
     fun notifyPlaybackStopped(itemId: UUID, positionMs: Long) {
         val capturedSessionId = currentSessionId
         val capturedMediaSourceId = lastKnownMediaSourceId
+        val capturedLiveStreamId = lastKnownLiveStreamId
         scope.launch {
-            val positionTicks = positionMs * 10000
-            _playbackEvents.emit(PlaybackEvent.Stopped(itemId, positionTicks))
+            withContext(NonCancellable) {
+                val positionTicks = positionMs * 10000
+                _playbackEvents.emit(PlaybackEvent.Stopped(itemId, positionTicks))
 
-            try {
-                updatePlaybackPosition(positionMs)
-                reportPlaybackStop(itemId, capturedSessionId, capturedMediaSourceId, positionTicks)
-                handlePlaybackStopped(itemId)
-            } catch (e: Exception) {
-                Timber.e(e, "Error in notifyPlaybackStopped")
+                try {
+                    updatePlaybackPosition(positionMs)
+                    reportPlaybackStop(
+                        itemId,
+                        capturedSessionId,
+                        capturedMediaSourceId,
+                        capturedLiveStreamId,
+                        positionTicks,
+                    )
+                    handlePlaybackStopped(itemId)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error in notifyPlaybackStopped")
+                }
             }
         }
     }
@@ -69,6 +91,7 @@ constructor(
         itemId: UUID,
         sessionId: String?,
         mediaSourceId: String?,
+        liveStreamId: String?,
         positionTicks: Long,
     ) {
         try {
@@ -79,6 +102,7 @@ constructor(
                         sessionId = sessionId,
                         positionTicks = positionTicks,
                         mediaSourceId = mediaSourceId,
+                        liveStreamId = liveStreamId,
                     )
 
                 if (success) {
@@ -110,21 +134,17 @@ constructor(
             if (refreshedItem != null) {
                 val seriesId = (refreshedItem as? AfinityEpisode)?.seriesId
                 val seasonId = (refreshedItem as? AfinityEpisode)?.seasonId
-                if (refreshedItem is AfinityEpisode && refreshedItem.played) {
-                    Timber.d("Episode finished. Refreshing Next Up queue...")
-                    mediaRepository.invalidateNextUpCache()
-                }
-                _playbackEvents.emit(PlaybackEvent.Synced(itemId, seriesId, seasonId))
+                appDataRepository.updateItemInCaches(refreshedItem)
+                mediaChangeManager.publishKnownChange(
+                    updatedItem = refreshedItem,
+                    knownSeriesId = seriesId,
+                    knownSeasonId = seasonId,
+                    source = MediaChangeSource.PLAYBACK,
+                )
+                mediaRefreshBus.emit(RefreshTrigger.USER_DATA_CHANGED)
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to handle playback stopped")
-        }
-    }
-
-    fun notifyItemChanged(itemId: UUID, seriesId: UUID? = null, seasonId: UUID? = null) {
-        scope.launch {
-            Timber.d("Broadcasting manual item change for: $itemId")
-            _playbackEvents.emit(PlaybackEvent.Synced(itemId, seriesId, seasonId))
         }
     }
 
@@ -133,12 +153,10 @@ constructor(
         currentSessionId = null
         lastKnownPosition = 0L
         lastKnownMediaSourceId = null
+        lastKnownLiveStreamId = null
     }
 }
 
 sealed class PlaybackEvent {
     data class Stopped(val itemId: UUID, val positionTicks: Long) : PlaybackEvent()
-
-    data class Synced(val itemId: UUID, val seriesId: UUID? = null, val seasonId: UUID? = null) :
-        PlaybackEvent()
 }

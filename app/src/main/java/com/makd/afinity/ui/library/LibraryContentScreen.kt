@@ -2,6 +2,7 @@
 
 package com.makd.afinity.ui.library
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,12 +12,14 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,14 +32,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
@@ -45,10 +46,9 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +56,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -65,8 +64,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import androidx.paging.LoadState
@@ -80,6 +81,8 @@ import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinityMovie
 import com.makd.afinity.data.models.media.AfinityShow
 import com.makd.afinity.navigation.Destination
+import com.makd.afinity.navigation.LocalShowRatings
+import com.makd.afinity.ui.components.AfinityTopAppBar
 import com.makd.afinity.ui.components.AsyncImage
 import com.makd.afinity.ui.components.FullScreenEmpty
 import com.makd.afinity.ui.components.FullScreenError
@@ -95,6 +98,7 @@ fun LibraryContentScreen(
     navController: NavController,
     viewModel: LibraryContentViewModel = hiltViewModel(),
     widthSizeClass: WindowWidthSizeClass,
+    isMiniPlayerVisible: Boolean = false,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val pagingDataFlow by viewModel.pagingData.collectAsStateWithLifecycle()
@@ -102,6 +106,22 @@ fun LibraryContentScreen(
     val gridState = rememberLazyGridState()
     val scrollToIndex by viewModel.scrollToIndex.collectAsStateWithLifecycle()
     var showSortDialog by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val playerOffset by
+        animateDpAsState(
+            targetValue = if (isMiniPlayerVisible) 112.dp else 0.dp,
+            label = "playerOffset",
+        )
 
     LaunchedEffect(scrollToIndex) {
         if (scrollToIndex >= 0) {
@@ -114,137 +134,168 @@ fun LibraryContentScreen(
         modifier =
             modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.displayCutout)
-                .background(MaterialTheme.colorScheme.background)
+                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                .background(MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            LibraryContentTopBar(
-                title = uiState.libraryName,
-                backgroundOpacity = 1f,
+            AfinityTopAppBar(
+                title = {
+                    Text(
+                        text = uiState.libraryName,
+                        style =
+                            MaterialTheme.typography.headlineLarge.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                },
+                backgroundOpacity = { 1f },
                 userProfileImageUrl = uiState.userProfileImageUrl,
                 onProfileClick = onProfileClick,
-                navController = navController,
+                onSearchClick = {
+                    val route = Destination.createSearchRoute()
+                    navController.navigate(route)
+                },
             )
+            Box(
+                modifier =
+                    Modifier.weight(1f)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    FilterRow(
+                        currentFilter = uiState.currentFilter,
+                        onFilterSelected = { viewModel.updateFilter(it) },
+                    )
 
-            FilterRow(
-                currentFilter = uiState.currentFilter,
-                onFilterSelected = { viewModel.updateFilter(it) },
-            )
-
-            when {
-                uiState.isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        FullScreenLoading()
-                    }
-                }
-
-                uiState.error != null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        FullScreenError(message = uiState.error)
-                    }
-                }
-
-                lazyPagingItems.itemCount == 0 &&
-                    lazyPagingItems.loadState.refresh !is LoadState.Loading -> {
-                    val selectedLetter = uiState.selectedLetter
-                    if (selectedLetter != null) {
-                        Row(modifier = Modifier.fillMaxSize()) {
+                    when {
+                        uiState.isLoading -> {
                             Box(
-                                modifier = Modifier.weight(1f).fillMaxSize().padding(top = 16.dp),
+                                modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                EmptyLetterFilterMessage(
-                                    letter = selectedLetter,
-                                    onClearFilter = { viewModel.clearLetterFilter() },
-                                )
+                                FullScreenLoading()
                             }
+                        }
+
+                        uiState.error != null -> {
                             Box(
-                                modifier = Modifier.fillMaxHeight(),
+                                modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                AlphabetScroller(
-                                    onLetterSelected = { viewModel.scrollToLetter(it) },
-                                    selectedLetter = uiState.selectedLetter,
-                                    modifier =
-                                        Modifier.background(
-                                            MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                                FullScreenError(message = uiState.error)
+                            }
+                        }
+
+                        lazyPagingItems.itemCount == 0 &&
+                            lazyPagingItems.loadState.refresh !is LoadState.Loading -> {
+                            val selectedLetter = uiState.selectedLetter
+                            if (selectedLetter != null) {
+                                Row(modifier = Modifier.fillMaxSize()) {
+                                    Box(
+                                        modifier =
+                                            Modifier.weight(1f).fillMaxSize().padding(top = 16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        EmptyLetterFilterMessage(
+                                            letter = selectedLetter,
+                                            onClearFilter = { viewModel.clearLetterFilter() },
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier.fillMaxHeight(),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        AlphabetScroller(
+                                            onLetterSelected = { viewModel.scrollToLetter(it) },
+                                            selectedLetter = uiState.selectedLetter,
+                                            modifier =
+                                                Modifier.background(
+                                                    MaterialTheme.colorScheme.surface.copy(
+                                                        alpha = 0.8f
+                                                    )
+                                                ),
+                                        )
+                                    }
+                                }
+                            } else if (uiState.currentFilter != FilterType.ALL) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    EmptyFilterMessage(
+                                        filterType = uiState.currentFilter,
+                                        onClearFilter = { viewModel.updateFilter(FilterType.ALL) },
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    FullScreenEmpty(
+                                        title = stringResource(R.string.library_empty_title),
+                                        message = stringResource(R.string.library_empty_message),
+                                    )
+                                }
+                            }
+                        }
+
+                        else -> {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                PaginatedMediaGrid(
+                                    items = lazyPagingItems,
+                                    widthSizeClass = widthSizeClass,
+                                    state = gridState,
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding =
+                                        PaddingValues(
+                                            start = 16.dp,
+                                            end = 16.dp,
+                                            top = 16.dp,
+                                            bottom = 80.dp + playerOffset,
                                         ),
-                                )
+                                ) { item ->
+                                    MediaItemGridCard(
+                                        item = item,
+                                        onClick = {
+                                            viewModel.onItemClick(item)
+                                            onItemClick(item)
+                                        },
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    AlphabetScroller(
+                                        onLetterSelected = { viewModel.scrollToLetter(it) },
+                                        selectedLetter = uiState.selectedLetter,
+                                        modifier =
+                                            Modifier.background(
+                                                MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                                            ),
+                                    )
+                                }
                             }
-                        }
-                    } else if (uiState.currentFilter != FilterType.ALL) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            EmptyFilterMessage(
-                                filterType = uiState.currentFilter,
-                                onClearFilter = { viewModel.updateFilter(FilterType.ALL) },
-                            )
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            FullScreenEmpty(
-                                title = stringResource(R.string.library_empty_title),
-                                message = stringResource(R.string.library_empty_message),
-                            )
                         }
                     }
                 }
 
-                else -> {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        PaginatedMediaGrid(
-                            items = lazyPagingItems,
-                            widthSizeClass = widthSizeClass,
-                            state = gridState,
-                            modifier = Modifier.weight(1f),
-                            contentPadding =
-                                PaddingValues(
-                                    start = 16.dp,
-                                    end = 16.dp,
-                                    top = 16.dp,
-                                    bottom = 80.dp,
-                                ),
-                        ) { item ->
-                            MediaItemGridCard(
-                                item = item,
-                                onClick = {
-                                    viewModel.onItemClick(item)
-                                    onItemClick(item)
-                                },
-                            )
-                        }
-
-                        Box(
-                            modifier = Modifier.fillMaxHeight(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            AlphabetScroller(
-                                onLetterSelected = { viewModel.scrollToLetter(it) },
-                                selectedLetter = uiState.selectedLetter,
-                                modifier =
-                                    Modifier.background(
-                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
-                                    ),
-                            )
-                        }
-                    }
+                FloatingActionButton(
+                    onClick = { showSortDialog = true },
+                    modifier =
+                        Modifier.align(Alignment.BottomEnd)
+                            .padding(end = 24.dp)
+                            .padding(bottom = 16.dp + playerOffset),
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_arrows_sort),
+                        contentDescription = stringResource(R.string.cd_sort_fab),
+                    )
                 }
             }
-        }
-
-        FloatingActionButton(
-            onClick = { showSortDialog = true },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).padding(end = 24.dp),
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_arrows_sort),
-                contentDescription = stringResource(R.string.cd_sort_fab),
-            )
         }
     }
 
@@ -262,107 +313,14 @@ fun LibraryContentScreen(
 }
 
 @Composable
-private fun LibraryContentTopBar(
-    title: String,
-    backgroundOpacity: Float = 0f,
-    navController: NavController,
-    userProfileImageUrl: String? = null,
-    onProfileClick: () -> Unit,
-) {
-    TopAppBar(
-        title = {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-        },
-        actions = {
-            Button(
-                onClick = {
-                    val route = Destination.createSearchRoute()
-                    navController.navigate(route)
-                },
-                modifier = Modifier.height(48.dp).width(120.dp),
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                shape = RoundedCornerShape(24.dp),
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_search),
-                            contentDescription = stringResource(R.string.action_search),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        Text(
-                            text = stringResource(R.string.action_search),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            IconButton(onClick = onProfileClick, modifier = Modifier.size(48.dp)) {
-                Box(
-                    modifier =
-                        Modifier.fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                            .clip(CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (userProfileImageUrl != null) {
-                        AsyncImage(
-                            imageUrl = userProfileImageUrl,
-                            contentDescription = stringResource(R.string.cd_profile),
-                            targetWidth = 48.dp,
-                            targetHeight = 48.dp,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_user_circle),
-                            contentDescription = stringResource(R.string.cd_profile),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(32.dp),
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-        },
-        colors =
-            TopAppBarDefaults.topAppBarColors(
-                containerColor =
-                    MaterialTheme.colorScheme.background.copy(alpha = backgroundOpacity)
-            ),
-    )
-}
-
-@Composable
 private fun MediaItemGridCard(
     item: AfinityItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.fillMaxWidth().clickable { onClick() },
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(modifier = modifier.fillMaxWidth()) {
         Card(
+            onClick = onClick,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
             shape = RoundedCornerShape(12.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
@@ -462,6 +420,8 @@ private fun MediaItemGridCard(
             }
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+
         Text(
             text = item.name,
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
@@ -470,6 +430,8 @@ private fun MediaItemGridCard(
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Start,
         )
+
+        val showRatings = LocalShowRatings.current
 
         when (item) {
             is AfinityMovie -> {
@@ -485,49 +447,51 @@ private fun MediaItemGridCard(
                         )
                     }
 
-                    item.communityRating?.let { rating ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_imdb_logo),
-                                contentDescription = stringResource(R.string.cd_imdb),
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = String.format(Locale.US, "%.1f", rating),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                    if (showRatings) {
+                        item.communityRating?.let { rating ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_imdb_logo),
+                                    contentDescription = stringResource(R.string.cd_imdb),
+                                    tint = Color.Unspecified,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "%.1f", rating),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                    }
 
-                    item.criticRating?.let { rtRating ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Icon(
-                                painter =
-                                    painterResource(
-                                        id =
-                                            if (rtRating > 60) {
-                                                R.drawable.ic_rotten_tomato_fresh
-                                            } else {
-                                                R.drawable.ic_rotten_tomato_rotten
-                                            }
-                                    ),
-                                contentDescription = stringResource(R.string.cd_rotten_tomatoes),
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(12.dp),
-                            )
-                            Text(
-                                text = "${rtRating.toInt()}%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        item.criticRating?.let { rtRating ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Icon(
+                                    painter =
+                                        painterResource(
+                                            id =
+                                                if (rtRating > 60) {
+                                                    R.drawable.ic_rotten_tomato_fresh
+                                                } else {
+                                                    R.drawable.ic_rotten_tomato_rotten
+                                                }
+                                        ),
+                                    contentDescription = stringResource(R.string.cd_rotten_tomatoes),
+                                    tint = Color.Unspecified,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                                Text(
+                                    text = "${rtRating.toInt()}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -546,22 +510,24 @@ private fun MediaItemGridCard(
                         )
                     }
 
-                    item.communityRating?.let { rating ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_imdb_logo),
-                                contentDescription = stringResource(R.string.cd_imdb),
-                                tint = Color.Unspecified,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = String.format(Locale.US, "%.1f", rating),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                    if (showRatings) {
+                        item.communityRating?.let { rating ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_imdb_logo),
+                                    contentDescription = stringResource(R.string.cd_imdb),
+                                    tint = Color.Unspecified,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = String.format(Locale.US, "%.1f", rating),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
@@ -775,7 +741,7 @@ private fun FilterRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
-        items(filters) { (filterType, label) ->
+        items(filters, key = { it.first.name }) { (filterType, label) ->
             FilterChip(
                 selected = currentFilter == filterType,
                 onClick = { onFilterSelected(filterType) },

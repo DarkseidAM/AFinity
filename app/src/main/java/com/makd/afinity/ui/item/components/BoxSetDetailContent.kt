@@ -46,6 +46,8 @@ fun BoxSetDetailContent(
         specialFeatures = emptyList(),
         containingBoxSets = emptyList(),
         tmdbReviews = emptyList(),
+        mdbRatings = emptyList(),
+        isRatingsFromCache = false,
         onSpecialFeatureClick = {},
         onBoxSetClick = {},
         onPersonClick = {},
@@ -107,7 +109,7 @@ private fun BoxSetTypeSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp),
         ) {
-            items(items) { item ->
+            items(items, key = { it.id.toString() }) { item ->
                 MediaItemCard(item = item, onClick = { onItemClick(item) }, cardWidth = cardWidth)
             }
         }
@@ -132,7 +134,7 @@ private fun BoxSetEpisodesSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp),
         ) {
-            items(episodes) { episode ->
+            items(episodes, key = { it.id.toString() }) { episode ->
                 ContinueWatchingCard(
                     item = episode,
                     onClick = { onEpisodeClick(episode) },

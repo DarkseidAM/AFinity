@@ -132,7 +132,7 @@ fun CastRemoteControllerScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = castState.deviceName ?: "Unknown Device",
+                        text = castState.deviceName ?: stringResource(R.string.unknown_device),
                         color = Color.White.copy(alpha = 0.8f),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
@@ -503,7 +503,7 @@ private fun CastPlaybackControls(
                 IconButton(onClick = onShowEpisodeList) {
                     Icon(
                         painter = painterResource(R.drawable.ic_episodes_list),
-                        contentDescription = "Episode List",
+                        contentDescription = stringResource(R.string.cd_episode_list),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(28.dp),
                     )
@@ -512,7 +512,7 @@ private fun CastPlaybackControls(
             IconButton(onClick = onShowSpeed) {
                 Icon(
                     painter = painterResource(R.drawable.ic_speed),
-                    contentDescription = "Playback Speed",
+                    contentDescription = stringResource(R.string.cd_playback_speed),
                     tint = Color.White,
                     modifier = Modifier.size(28.dp),
                 )
@@ -528,7 +528,7 @@ private fun CastPlaybackControls(
             IconButton(onClick = onShowAudio) {
                 Icon(
                     painter = painterResource(R.drawable.ic_audio),
-                    contentDescription = "Audio Track",
+                    contentDescription = stringResource(R.string.cd_audio_track),
                     tint = Color.White,
                     modifier = Modifier.size(28.dp),
                 )
@@ -597,7 +597,7 @@ fun CastQualitySelectionDialog(
         title = { Text(stringResource(R.string.cast_quality)) },
         text = {
             LazyColumn {
-                items(bitrateOptions) { option ->
+                items(bitrateOptions, key = { it.bitrate }) { option ->
                     val isSelected = castState.castBitrate == option.bitrate
                     Row(
                         modifier =
@@ -660,7 +660,7 @@ fun CastAudioSelectionDialog(
         title = { Text(stringResource(R.string.player_audio_title)) },
         text = {
             LazyColumn {
-                items(audioStreams) { stream ->
+                items(audioStreams, key = { it.index }) { stream ->
                     val isSelected =
                         castState.audioStreamIndex?.let { it == stream.index } ?: stream.isDefault
                     val displayName = buildString {
@@ -780,7 +780,7 @@ fun CastSubtitleSelectionDialog(
                     }
                 }
 
-                items(subtitleStreams) { stream ->
+                items(subtitleStreams, key = { it.index }) { stream ->
                     val isSelected = stream.index == castState.subtitleStreamIndex
                     val displayName = buildString {
                         append(stream.displayTitle ?: stream.language?.uppercase() ?: "Unknown")

@@ -29,7 +29,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.makd.afinity.R
 import com.makd.afinity.data.models.jellyseerr.Permissions
 import com.makd.afinity.data.models.jellyseerr.hasPermission
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.AfinityTopAppBar
+import com.makd.afinity.ui.components.FullScreenEmpty
+import com.makd.afinity.ui.components.FullScreenLoading
 import com.makd.afinity.ui.components.RequestConfirmationDialog
 import com.makd.afinity.ui.main.MainUiState
 import com.makd.afinity.ui.theme.CardDimensions.gridMinSize
@@ -64,6 +67,7 @@ fun FilteredMediaScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val requestsUiState by requestsViewModel.uiState.collectAsStateWithLifecycle()
     val currentUser by requestsViewModel.currentUser.collectAsStateWithLifecycle()
+    val playerOffset = LocalPlayerOffset.current
 
     LaunchedEffect(filterParams) { viewModel.loadContent(filterParams) }
 
@@ -85,13 +89,14 @@ fun FilteredMediaScreen(
                 onSearchClick = onSearchClick,
                 onProfileClick = onProfileClick,
                 userProfileImageUrl = mainUiState.userProfileImageUrl,
+                userName = mainUiState.userName,
             )
         },
         modifier = modifier.fillMaxSize(),
     ) { innerPadding ->
         when {
             uiState.isLoading && uiState.items.isEmpty() -> {
-                LoadingView(modifier = Modifier.fillMaxSize().padding(innerPadding))
+                FullScreenLoading(modifier = Modifier.padding(innerPadding))
             }
 
             uiState.error != null && uiState.items.isEmpty() -> {
@@ -103,14 +108,23 @@ fun FilteredMediaScreen(
             }
 
             uiState.items.isEmpty() -> {
-                EmptyView(modifier = Modifier.fillMaxSize().padding(innerPadding))
+                FullScreenEmpty(
+                    message = stringResource(R.string.error_no_content),
+                    modifier = Modifier.padding(innerPadding),
+                )
             }
 
             else -> {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(widthSizeClass.gridMinSize),
                     modifier = Modifier.fillMaxSize().padding(innerPadding),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
+                    contentPadding =
+                        PaddingValues(
+                            start = 14.dp,
+                            top = 16.dp,
+                            end = 14.dp,
+                            bottom = 16.dp + playerOffset,
+                        ),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
@@ -215,11 +229,6 @@ fun FilteredMediaScreen(
 }
 
 @Composable
-private fun LoadingView(modifier: Modifier = Modifier) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-}
-
-@Composable
 private fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Column(
@@ -243,18 +252,3 @@ private fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier =
     }
 }
 
-@Composable
-private fun EmptyView(modifier: Modifier = Modifier) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.error_no_content),
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}

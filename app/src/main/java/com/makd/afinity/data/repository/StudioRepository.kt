@@ -3,7 +3,10 @@ package com.makd.afinity.data.repository
 import com.makd.afinity.data.database.AfinityDatabase
 import com.makd.afinity.data.database.AfinityTypeConverters
 import com.makd.afinity.data.database.entities.StudioCacheEntity
+import com.makd.afinity.data.manager.SessionManager
 import com.makd.afinity.data.models.media.AfinityStudio
+import com.makd.afinity.data.models.media.withBaseUrl
+import com.makd.afinity.data.repository.media.MediaRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +18,11 @@ import kotlin.time.Duration.Companion.hours
 @Singleton
 class StudioRepository
 @Inject
-constructor(private val jellyfinRepository: JellyfinRepository, database: AfinityDatabase) {
+constructor(
+    private val mediaRepository: MediaRepository,
+    private val sessionManager: SessionManager,
+    database: AfinityDatabase,
+) {
     private val studioCacheTTL = 6.hours.inWholeMilliseconds
     private val studioCacheDao = database.studioCacheDao()
     private val afinityTypeConverters = AfinityTypeConverters()
@@ -23,25 +30,31 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
     private val _studios = MutableStateFlow<List<AfinityStudio>>(emptyList())
     val studios: StateFlow<List<AfinityStudio>> = _studios.asStateFlow()
 
+    private fun currentServerId(): String = sessionManager.currentSession.value?.serverId ?: ""
+    private fun currentUserId(): String = sessionManager.currentSession.value?.userId?.toString() ?: ""
+
     suspend fun loadStudios() {
         try {
-            val cachedStudios = studioCacheDao.getAllCachedStudios()
+            val serverId = currentServerId()
+            val userId = currentUserId()
+            val cachedStudios = studioCacheDao.getAllCachedStudios(serverId, userId)
             if (cachedStudios.isNotEmpty()) {
+                val currentBaseUrl = mediaRepository.getBaseUrl()
                 val studiosList =
                     cachedStudios.mapNotNull { entity ->
-                        afinityTypeConverters.toAfinityStudio(entity.studioData)
+                        afinityTypeConverters.toAfinityStudio(entity.studioData)?.withBaseUrl(currentBaseUrl)
                     }
 
                 if (studiosList.isNotEmpty()) {
                     _studios.value = studiosList
                     val currentTime = System.currentTimeMillis()
-                    val isFresh = studioCacheDao.isStudioCacheFresh(studioCacheTTL, currentTime)
+                    val isFresh = studioCacheDao.isStudioCacheFresh(serverId, userId, studioCacheTTL, currentTime)
                     if (isFresh) return
                 }
             }
 
             val studiosList: List<AfinityStudio> =
-                jellyfinRepository.getStudios(
+                mediaRepository.getStudios(
                     parentId = null,
                     limit = 15,
                     includeItemTypes = listOf("MOVIE", "SERIES"),
@@ -53,12 +66,14 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
                     studiosList.mapIndexed { index: Int, studio: AfinityStudio ->
                         StudioCacheEntity(
                             studioId = studio.id.toString(),
+                            serverId = serverId,
+                            userId = userId,
                             studioData = afinityTypeConverters.fromAfinityStudio(studio) ?: "",
                             position = index,
                             cachedTimestamp = timestamp,
                         )
                     }
-                studioCacheDao.replaceStudios(studioEntities)
+                studioCacheDao.replaceStudios(serverId, userId, studioEntities)
             }
 
             _studios.value = studiosList
@@ -69,7 +84,7 @@ constructor(private val jellyfinRepository: JellyfinRepository, database: Afinit
 
     suspend fun clearAllData() {
         try {
-            studioCacheDao.deleteAllStudios()
+            studioCacheDao.clearAll()
         } catch (e: Exception) {
             Timber.e(e, "Failed to clear studio caches")
         }

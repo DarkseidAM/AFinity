@@ -1,5 +1,6 @@
 package com.makd.afinity.data.models.player
 
+import com.makd.afinity.data.models.livetv.LiveTvPlaybackInfo
 import com.makd.afinity.data.models.media.AfinityItem
 import com.makd.afinity.data.models.media.AfinitySegment
 import java.util.UUID
@@ -67,6 +68,7 @@ sealed class PlayerEvent {
         val channelId: UUID,
         val channelName: String,
         val streamUrl: String,
+        val playbackInfo: LiveTvPlaybackInfo,
     ) : PlayerEvent()
 
     data class SkipSegment(val segment: AfinitySegment) : PlayerEvent()
@@ -75,7 +77,7 @@ sealed class PlayerEvent {
 
     data class OnSeekBarValueChange(val positionMs: Long) : PlayerEvent()
 
-    object OnSeekBarDragFinished : PlayerEvent()
+    data class OnSeekBarDragFinished(val positionMs: Long) : PlayerEvent()
 
     object ToggleRemainingTime : PlayerEvent()
 
@@ -89,7 +91,25 @@ sealed class PlayerEvent {
 
     data class SwitchVersion(val mediaSourceId: String) : PlayerEvent()
 
+    data object TogglePlaybackStats : PlayerEvent()
+
     data object ToggleVersionPicker : PlayerEvent()
+}
+
+data class PlaybackStats(
+    val playerType: String = "Unknown",
+    val videoResolution: String = "Unknown",
+    val videoCodec: String = "Unknown",
+    val audioCodec: String = "Unknown",
+    val audioChannels: Int = 0,
+    val audioSampleRate: Int = 0,
+    val droppedFrames: Int = 0,
+    val hwDec: String = "Unknown",
+    val bufferHealth: String = "Unknown",
+    val videoBitrate: String = "Unknown",
+) {
+    val hasVideo: Boolean
+        get() = videoResolution != "0x0" && videoResolution != "Unknown"
 }
 
 data class GestureConfig(

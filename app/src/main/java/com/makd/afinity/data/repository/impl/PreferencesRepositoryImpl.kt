@@ -14,15 +14,15 @@ import com.makd.afinity.data.models.common.SortBy
 import com.makd.afinity.data.models.player.MpvAudioOutput
 import com.makd.afinity.data.models.player.MpvHwDec
 import com.makd.afinity.data.models.player.MpvVideoOutput
-import com.makd.afinity.data.models.player.SegmentAutoSkipMode
+import com.makd.afinity.data.models.player.SkipMode
 import com.makd.afinity.data.models.player.SubtitleHorizontalAlignment
+import com.makd.afinity.player.exoplayer.DecoderPriority
 import com.makd.afinity.data.models.player.SubtitleOutlineStyle
 import com.makd.afinity.data.models.player.SubtitlePreferences
 import com.makd.afinity.data.models.player.SubtitleVerticalPosition
 import com.makd.afinity.data.models.player.VideoZoomMode
 import com.makd.afinity.data.repository.PreferencesRepository
 import com.makd.afinity.di.AppPreferences
-import com.makd.afinity.player.exoplayer.DecoderPriority
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -34,13 +34,8 @@ import javax.inject.Singleton
 @Singleton
 class PreferencesRepositoryImpl
 @Inject
-constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : PreferencesRepository {
-
-    private companion object Defaults {
-        const val DEFAULT_CACHE_FORWARD_SECONDS = 50
-        const val DEFAULT_CACHE_BACK_SECONDS = 0
-        const val DEFAULT_NEXT_EPISODE_THRESHOLD_MS = 5000
-    }
+constructor(@param:AppPreferences private val dataStore: DataStore<Preferences>) :
+    PreferencesRepository {
 
     private object Keys {
         val CURRENT_SERVER_ID = stringPreferencesKey("current_server_id")
@@ -53,16 +48,16 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
         val AUTO_PLAY = booleanPreferencesKey("auto_play")
         val MAX_BITRATE = intPreferencesKey("max_bitrate")
-        val SKIP_INTRO_ENABLED = booleanPreferencesKey("skip_intro_enabled")
-        val SKIP_OUTRO_ENABLED = booleanPreferencesKey("skip_outro_enabled")
+        val SKIP_INTRO_ENABLED_LEGACY = booleanPreferencesKey("skip_intro_enabled")
+        val SKIP_OUTRO_ENABLED_LEGACY = booleanPreferencesKey("skip_outro_enabled")
+        val SKIP_INTRO_MODE = stringPreferencesKey("skip_intro_mode")
+        val SKIP_OUTRO_MODE = stringPreferencesKey("skip_outro_mode")
         val USE_EXO_PLAYER = booleanPreferencesKey("use_exo_player")
         val VIDEO_DECODER_PRIORITY = stringPreferencesKey("video_decoder_priority")
         val DOLBY_VISION_CONVERSION = booleanPreferencesKey("dolby_vision_conversion")
-        val CACHE_FORWARD_SECONDS = intPreferencesKey("cache_forward_seconds")
-        val CACHE_BACK_SECONDS = intPreferencesKey("cache_back_seconds")
-        val NEXT_EPISODE_THRESHOLD_MS = intPreferencesKey("next_episode_threshold_ms")
-        val SEGMENT_AUTO_SKIP_MODE = stringPreferencesKey("segment_auto_skip_mode")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+
+        val APP_FONT = stringPreferencesKey("app_font")
         val IMAGE_CACHE_ENABLED = booleanPreferencesKey("image_cache_enabled")
         val IMAGE_CACHE_SIZE_MB = intPreferencesKey("image_cache_size_mb")
         val PIP_GESTURE_ENABLED = booleanPreferencesKey("pip_gesture_enabled")
@@ -75,6 +70,7 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         val DOWNLOAD_WIFI_ONLY = booleanPreferencesKey("download_wifi_only")
         val DOWNLOAD_QUALITY = stringPreferencesKey("download_quality")
         val MAX_DOWNLOADS = intPreferencesKey("max_downloads")
+        val DOWNLOAD_STORAGE_VOLUME_ID = stringPreferencesKey("download_storage_volume_id")
 
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
         val SYNC_INTERVAL = intPreferencesKey("sync_interval")
@@ -117,6 +113,9 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
         val CAST_HEVC_ENABLED = booleanPreferencesKey("cast_hevc_enabled")
         val CAST_MAX_BITRATE = intPreferencesKey("cast_max_bitrate")
+        val BUFFER_SIZE_MB = intPreferencesKey("buffer_size_mb")
+
+        val SHOW_RATINGS = booleanPreferencesKey("show_ratings")
     }
 
     override suspend fun setCurrentServerId(serverId: String?) {
@@ -244,20 +243,31 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         }
     }
 
-    override suspend fun setSkipIntroEnabled(enabled: Boolean) {
-        dataStore.edit { preferences -> preferences[Keys.SKIP_INTRO_ENABLED] = enabled }
+    override suspend fun setSkipIntroMode(mode: SkipMode) {
+        dataStore.edit { it[Keys.SKIP_INTRO_MODE] = mode.name }
     }
 
-    override suspend fun getSkipIntroEnabled(): Boolean {
-        return dataStore.data.first()[Keys.SKIP_INTRO_ENABLED] ?: true
+    override suspend fun getSkipIntroMode(): SkipMode {
+        val prefs = dataStore.data.first()
+        prefs[Keys.SKIP_INTRO_MODE]?.let {
+            return SkipMode.fromString(it)
+        }
+        // Migrate from legacy boolean: true → BUTTON, false → DISABLED
+        return if (prefs[Keys.SKIP_INTRO_ENABLED_LEGACY] == false) SkipMode.DISABLED
+        else SkipMode.BUTTON
     }
 
-    override suspend fun setSkipOutroEnabled(enabled: Boolean) {
-        dataStore.edit { preferences -> preferences[Keys.SKIP_OUTRO_ENABLED] = enabled }
+    override suspend fun setSkipOutroMode(mode: SkipMode) {
+        dataStore.edit { it[Keys.SKIP_OUTRO_MODE] = mode.name }
     }
 
-    override suspend fun getSkipOutroEnabled(): Boolean {
-        return dataStore.data.first()[Keys.SKIP_OUTRO_ENABLED] ?: true
+    override suspend fun getSkipOutroMode(): SkipMode {
+        val prefs = dataStore.data.first()
+        prefs[Keys.SKIP_OUTRO_MODE]?.let {
+            return SkipMode.fromString(it)
+        }
+        return if (prefs[Keys.SKIP_OUTRO_ENABLED_LEGACY] == false) SkipMode.DISABLED
+        else SkipMode.BUTTON
     }
 
     override suspend fun setThemeMode(mode: String) {
@@ -278,11 +288,19 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
     override fun getAutoPlayFlow(): Flow<Boolean> =
         dataStore.data.map { it[Keys.AUTO_PLAY] ?: true }
 
-    override fun getSkipIntroEnabledFlow(): Flow<Boolean> =
-        dataStore.data.map { it[Keys.SKIP_INTRO_ENABLED] ?: true }
+    override fun getSkipIntroModeFlow(): Flow<SkipMode> =
+        dataStore.data.map { prefs ->
+            prefs[Keys.SKIP_INTRO_MODE]?.let { SkipMode.fromString(it) }
+                ?: if (prefs[Keys.SKIP_INTRO_ENABLED_LEGACY] == false) SkipMode.DISABLED
+                else SkipMode.BUTTON
+        }
 
-    override fun getSkipOutroEnabledFlow(): Flow<Boolean> =
-        dataStore.data.map { it[Keys.SKIP_OUTRO_ENABLED] ?: true }
+    override fun getSkipOutroModeFlow(): Flow<SkipMode> =
+        dataStore.data.map { prefs ->
+            prefs[Keys.SKIP_OUTRO_MODE]?.let { SkipMode.fromString(it) }
+                ?: if (prefs[Keys.SKIP_OUTRO_ENABLED_LEGACY] == false) SkipMode.DISABLED
+                else SkipMode.BUTTON
+        }
 
     override suspend fun setDynamicColors(enabled: Boolean) {
         dataStore.edit { preferences -> preferences[Keys.DYNAMIC_COLORS] = enabled }
@@ -308,6 +326,9 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         return dataStore.data.first()[Keys.DOWNLOAD_WIFI_ONLY] ?: true
     }
 
+    override fun getDownloadWifiOnlyFlow(): Flow<Boolean> =
+        dataStore.data.map { it[Keys.DOWNLOAD_WIFI_ONLY] ?: true }
+
     override suspend fun setDownloadQuality(quality: String) {
         dataStore.edit { preferences -> preferences[Keys.DOWNLOAD_QUALITY] = quality }
     }
@@ -323,6 +344,20 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
     override suspend fun getMaxDownloads(): Int {
         return dataStore.data.first()[Keys.MAX_DOWNLOADS] ?: 3
     }
+
+    override fun getMaxDownloadsFlow(): Flow<Int> =
+        dataStore.data.map { it[Keys.MAX_DOWNLOADS] ?: 3 }
+
+    override suspend fun setDownloadStorageVolumeId(volumeId: String) {
+        dataStore.edit { preferences -> preferences[Keys.DOWNLOAD_STORAGE_VOLUME_ID] = volumeId }
+    }
+
+    override suspend fun getDownloadStorageVolumeId(): String {
+        return dataStore.data.first()[Keys.DOWNLOAD_STORAGE_VOLUME_ID] ?: "primary"
+    }
+
+    override fun getDownloadStorageVolumeIdFlow(): Flow<String> =
+        dataStore.data.map { it[Keys.DOWNLOAD_STORAGE_VOLUME_ID] ?: "primary" }
 
     override suspend fun setSyncEnabled(enabled: Boolean) {
         dataStore.edit { preferences -> preferences[Keys.SYNC_ENABLED] = enabled }
@@ -410,6 +445,18 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         return dataStore.data.map { it[Keys.CAST_MAX_BITRATE] ?: 16_000_000 }
     }
 
+    override suspend fun setBufferSizeMb(sizeMb: Int) {
+        dataStore.edit { preferences -> preferences[Keys.BUFFER_SIZE_MB] = sizeMb }
+    }
+
+    override suspend fun getBufferSizeMb(): Int {
+        return dataStore.data.first()[Keys.BUFFER_SIZE_MB] ?: 64
+    }
+
+    override fun getBufferSizeMbFlow(): Flow<Int> {
+        return dataStore.data.map { it[Keys.BUFFER_SIZE_MB] ?: 64 }
+    }
+
     override suspend fun clearAllPreferences() {
         dataStore.edit { preferences -> preferences.clear() }
     }
@@ -446,20 +493,14 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
     override val videoDecoderPriority: Flow<DecoderPriority> =
         dataStore.data
-            .catch { exception ->
-                if (exception is IOException) {
-                    emit(emptyPreferences())
-                } else {
-                    throw exception
-                }
-            }
-            .map { preferences ->
-                preferences[Keys.VIDEO_DECODER_PRIORITY]?.let { DecoderPriority.fromValue(it) }
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { prefs ->
+                prefs[Keys.VIDEO_DECODER_PRIORITY]?.let { DecoderPriority.fromValue(it) }
                     ?: DecoderPriority.default
             }
 
     override suspend fun setVideoDecoderPriority(value: DecoderPriority) {
-        dataStore.edit { preferences -> preferences[Keys.VIDEO_DECODER_PRIORITY] = value.value }
+        dataStore.edit { it[Keys.VIDEO_DECODER_PRIORITY] = value.value }
     }
 
     override suspend fun getVideoDecoderPriority(): DecoderPriority {
@@ -469,78 +510,15 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
     override val dolbyVisionConversion: Flow<Boolean> =
         dataStore.data
-            .catch { exception ->
-                if (exception is IOException) {
-                    emit(emptyPreferences())
-                } else {
-                    throw exception
-                }
-            }
-            .map { preferences -> preferences[Keys.DOLBY_VISION_CONVERSION] ?: false }
+            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+            .map { it[Keys.DOLBY_VISION_CONVERSION] ?: false }
 
     override suspend fun setDolbyVisionConversion(value: Boolean) {
-        dataStore.edit { preferences -> preferences[Keys.DOLBY_VISION_CONVERSION] = value }
+        dataStore.edit { it[Keys.DOLBY_VISION_CONVERSION] = value }
     }
 
     override suspend fun getDolbyVisionConversion(): Boolean {
         return dataStore.data.first()[Keys.DOLBY_VISION_CONVERSION] ?: false
-    }
-
-    override val cacheForwardSeconds: Flow<Int> =
-        dataStore.data
-            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-            .map { it[Keys.CACHE_FORWARD_SECONDS] ?: DEFAULT_CACHE_FORWARD_SECONDS }
-
-    override suspend fun setCacheForwardSeconds(value: Int) {
-        dataStore.edit { it[Keys.CACHE_FORWARD_SECONDS] = value }
-    }
-
-    override suspend fun getCacheForwardSeconds(): Int {
-        return dataStore.data.first()[Keys.CACHE_FORWARD_SECONDS] ?: DEFAULT_CACHE_FORWARD_SECONDS
-    }
-
-    override val cacheBackSeconds: Flow<Int> =
-        dataStore.data
-            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-            .map { it[Keys.CACHE_BACK_SECONDS] ?: DEFAULT_CACHE_BACK_SECONDS }
-
-    override suspend fun setCacheBackSeconds(value: Int) {
-        dataStore.edit { it[Keys.CACHE_BACK_SECONDS] = value }
-    }
-
-    override suspend fun getCacheBackSeconds(): Int {
-        return dataStore.data.first()[Keys.CACHE_BACK_SECONDS] ?: DEFAULT_CACHE_BACK_SECONDS
-    }
-
-    override val nextEpisodeThresholdMs: Flow<Int> =
-        dataStore.data
-            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-            .map { it[Keys.NEXT_EPISODE_THRESHOLD_MS] ?: DEFAULT_NEXT_EPISODE_THRESHOLD_MS }
-
-    override suspend fun setNextEpisodeThresholdMs(value: Int) {
-        dataStore.edit { it[Keys.NEXT_EPISODE_THRESHOLD_MS] = value }
-    }
-
-    override suspend fun getNextEpisodeThresholdMs(): Int {
-        return dataStore.data.first()[Keys.NEXT_EPISODE_THRESHOLD_MS]
-            ?: DEFAULT_NEXT_EPISODE_THRESHOLD_MS
-    }
-
-    override val segmentAutoSkipMode: Flow<SegmentAutoSkipMode> =
-        dataStore.data
-            .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-            .map { prefs ->
-                prefs[Keys.SEGMENT_AUTO_SKIP_MODE]?.let { SegmentAutoSkipMode.fromValue(it) }
-                    ?: SegmentAutoSkipMode.default
-            }
-
-    override suspend fun setSegmentAutoSkipMode(value: SegmentAutoSkipMode) {
-        dataStore.edit { it[Keys.SEGMENT_AUTO_SKIP_MODE] = value.value }
-    }
-
-    override suspend fun getSegmentAutoSkipMode(): SegmentAutoSkipMode {
-        return dataStore.data.first()[Keys.SEGMENT_AUTO_SKIP_MODE]
-            ?.let { SegmentAutoSkipMode.fromValue(it) } ?: SegmentAutoSkipMode.default
     }
 
     override suspend fun setMpvHwDec(hwDec: MpvHwDec) {
@@ -773,6 +751,18 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
         }
     }
 
+    override suspend fun setShowRatings(enabled: Boolean) {
+        dataStore.edit { preferences -> preferences[Keys.SHOW_RATINGS] = enabled }
+    }
+
+    override suspend fun getShowRatings(): Boolean {
+        return dataStore.data.first()[Keys.SHOW_RATINGS] ?: true
+    }
+
+    override fun getShowRatingsFlow(): Flow<Boolean> {
+        return dataStore.data.map { preferences -> preferences[Keys.SHOW_RATINGS] ?: true }
+    }
+
     override suspend fun setImageCacheEnabled(enabled: Boolean) {
         dataStore.edit { preferences -> preferences[Keys.IMAGE_CACHE_ENABLED] = enabled }
     }
@@ -787,5 +777,17 @@ constructor(@AppPreferences private val dataStore: DataStore<Preferences>) : Pre
 
     override suspend fun getImageCacheSizeMb(): Int {
         return dataStore.data.first()[Keys.IMAGE_CACHE_SIZE_MB] ?: 512
+    }
+
+    override suspend fun setAppFont(font: String) {
+        dataStore.edit { preferences -> preferences[Keys.APP_FONT] = font }
+    }
+
+    override suspend fun getAppFont(): String {
+        return dataStore.data.first()[Keys.APP_FONT] ?: "DEFAULT"
+    }
+
+    override fun getAppFontFlow(): Flow<String> {
+        return dataStore.data.map { preferences -> preferences[Keys.APP_FONT] ?: "DEFAULT" }
     }
 }

@@ -40,6 +40,8 @@ import com.makd.afinity.R
 import com.makd.afinity.data.models.extensions.primaryBlurHash
 import com.makd.afinity.data.models.extensions.primaryImageUrl
 import com.makd.afinity.data.models.extensions.showPrimaryImageUrl
+import com.makd.afinity.data.models.mdblist.MdbListRating
+import com.makd.afinity.data.models.mdblist.MdbListRatingBadges
 import com.makd.afinity.data.models.media.AfinityBoxSet
 import com.makd.afinity.data.models.media.AfinityEpisode
 import com.makd.afinity.data.models.media.AfinityItem
@@ -61,6 +63,10 @@ fun SeriesDetailContent(
     specialFeatures: List<AfinityItem>,
     containingBoxSets: List<AfinityBoxSet>,
     tmdbReviews: List<TmdbReview> = emptyList(),
+    mdbRatings: List<MdbListRating> = emptyList(),
+    mdbRatingBadges: MdbListRatingBadges = MdbListRatingBadges(),
+    omdbAwards: String? = null,
+    isRatingsFromCache: Boolean = false,
     onEpisodeClick: (AfinityEpisode) -> Unit,
     onSpecialFeatureClick: (AfinityItem) -> Unit,
     navController: NavController,
@@ -71,6 +77,10 @@ fun SeriesDetailContent(
         specialFeatures = specialFeatures,
         containingBoxSets = containingBoxSets,
         tmdbReviews = tmdbReviews,
+        mdbRatings = mdbRatings,
+        mdbRatingBadges = mdbRatingBadges,
+        omdbAwards = omdbAwards,
+        isRatingsFromCache = isRatingsFromCache,
         onSpecialFeatureClick = onSpecialFeatureClick,
         onBoxSetClick = { boxSet ->
             val route = Destination.createItemDetailRoute(boxSet.id.toString())
@@ -119,7 +129,7 @@ internal fun SeasonsSection(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(horizontal = 0.dp),
         ) {
-            items(seasons) { season ->
+            items(seasons, key = { it.id.toString() }) { season ->
                 SeasonCard(
                     season = season,
                     onClick = {
@@ -161,7 +171,9 @@ internal fun SeasonCard(season: AfinitySeason, onClick: () -> Unit, cardWidth: D
                     contentScale = ContentScale.Crop,
                 )
 
-                if (season.played) {
+                val visuallyPlayed = season.played
+
+                if (visuallyPlayed) {
                     Box(
                         modifier =
                             Modifier.align(Alignment.TopEnd)

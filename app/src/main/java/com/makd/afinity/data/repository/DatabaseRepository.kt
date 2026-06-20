@@ -21,6 +21,7 @@ import com.makd.afinity.data.models.server.ServerWithAddressesAndUsers
 import com.makd.afinity.data.models.user.AfinityUserDataDto
 import com.makd.afinity.data.models.user.User
 import kotlinx.coroutines.flow.Flow
+import org.jellyfin.sdk.model.api.UserItemDataDto
 import java.util.UUID
 
 interface DatabaseRepository {
@@ -44,6 +45,8 @@ interface DatabaseRepository {
     suspend fun deleteServerAddress(addressId: UUID)
 
     suspend fun getServerAddresses(serverId: String): List<ServerAddress>
+
+    suspend fun getServerAddressByUrl(serverId: String, address: String): ServerAddress?
 
     suspend fun getServerWithAddresses(serverId: String): ServerWithAddresses?
 
@@ -157,6 +160,13 @@ interface DatabaseRepository {
 
     suspend fun updateUserData(userData: AfinityUserDataDto)
 
+    suspend fun patchUserDataLocally(
+        itemId: UUID,
+        userId: UUID,
+        serverId: String,
+        userData: UserItemDataDto,
+    )
+
     suspend fun deleteUserData(userId: UUID, itemId: UUID)
 
     suspend fun getUserData(userId: UUID, itemId: UUID): AfinityUserDataDto?
@@ -227,13 +237,21 @@ interface DatabaseRepository {
 
     suspend fun getTotalBytesAllServers(): Long
 
+    suspend fun getTotalBytesPerVolumeForServer(serverId: String): Map<String, Long>
+
+    suspend fun getTotalBytesPerVolumeAllServers(): Map<String, Long>
+
     suspend fun backfillEmptyServerIds(serverId: String, userId: UUID)
 
     suspend fun deleteDownload(downloadId: UUID)
 
     suspend fun getSources(itemId: UUID): List<AfinitySourceDto>
 
-    suspend fun getItemMetadata(itemId: UUID): ItemMetadataCacheEntity?
+    suspend fun getItemMetadata(
+        itemId: UUID,
+        serverId: String,
+        userId: String,
+    ): ItemMetadataCacheEntity?
 
     suspend fun insertItemMetadata(metadata: ItemMetadataCacheEntity)
 }

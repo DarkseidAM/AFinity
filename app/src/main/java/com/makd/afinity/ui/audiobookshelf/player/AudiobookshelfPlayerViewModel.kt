@@ -1,10 +1,13 @@
 package com.makd.afinity.ui.audiobookshelf.player
 
+import android.content.Context
 import androidx.annotation.OptIn
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
+import com.makd.afinity.R
+import com.makd.afinity.data.models.player.PlaybackStats
 import com.makd.afinity.data.repository.AudiobookshelfRepository
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfEqualizerManager
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfPlaybackManager
@@ -12,6 +15,8 @@ import com.makd.afinity.player.audiobookshelf.AudiobookshelfPlayer
 import com.makd.afinity.player.audiobookshelf.AudiobookshelfSkipSilenceManager
 import com.makd.afinity.player.audiobookshelf.EqualizerPreset
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +29,7 @@ class AudiobookshelfPlayerViewModel
 @OptIn(UnstableApi::class)
 @Inject
 constructor(
+    @param:ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
     private val audiobookshelfRepository: AudiobookshelfRepository,
     private val audiobookshelfPlayer: AudiobookshelfPlayer,
@@ -50,6 +56,7 @@ constructor(
         startPlayback()
     }
 
+    @UnstableApi
     private fun startPlayback() {
         val currentState = playbackManager.playbackState.value
         if (currentState.sessionId != null && currentState.itemId == itemId) {
@@ -81,7 +88,7 @@ constructor(
                         _uiState.value =
                             _uiState.value.copy(
                                 isLoading = false,
-                                error = "Server URL not available",
+                                error = context.getString(R.string.error_server_url_not_available),
                             )
                     }
                 },
@@ -179,14 +186,38 @@ constructor(
     }
 
     override fun onCleared() {
+        statsPollingJob?.cancel()
         super.onCleared()
     }
 
-    fun stopPlayback() {
-        viewModelScope.launch {
-            audiobookshelfPlayer.pause()
-            audiobookshelfPlayer.closeSession()
+    private var statsPollingJob: kotlinx.coroutines.Job? = null
+
+    fun togglePlaybackStats() {
+        val willShow = !_uiState.value.showPlaybackStats
+        _uiState.value = _uiState.value.copy(showPlaybackStats = willShow)
+        if (willShow) {
+            startStatsPolling()
+        } else {
+            statsPollingJob?.cancel()
         }
+    }
+
+    private fun startStatsPolling() {
+        statsPollingJob?.cancel()
+        statsPollingJob = viewModelScope.launch {
+            while (true) {
+                if (_uiState.value.showPlaybackStats) {
+                    _uiState.value =
+                        _uiState.value.copy(playbackStats = audiobookshelfPlayer.getPlaybackStats())
+                }
+                delay(1000L)
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        audiobookshelfPlayer.pause()
+        audiobookshelfPlayer.closeSession()
     }
 }
 
@@ -197,4 +228,6 @@ data class AudiobookshelfPlayerUiState(
     val showSleepTimerDialog: Boolean = false,
     val showEqualizer: Boolean = false,
     val error: String? = null,
+    val showPlaybackStats: Boolean = false,
+    val playbackStats: PlaybackStats = PlaybackStats(),
 )

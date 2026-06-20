@@ -1,15 +1,22 @@
 package com.makd.afinity.data.database.entities
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 import com.makd.afinity.data.models.mdblist.MdbListRating
+import com.makd.afinity.data.models.mdblist.MdbListRatingBadges
 import com.makd.afinity.data.models.tmdb.TmdbReview
 import java.util.UUID
 
-@Entity(tableName = "item_metadata_cache")
+@Entity(
+    tableName = "item_metadata_cache",
+    primaryKeys = ["itemId", "serverId", "userId"],
+)
 data class ItemMetadataCacheEntity(
-    @PrimaryKey val itemId: UUID,
+    val itemId: UUID,
+    val serverId: String,
+    val userId: String,
     val tmdbReviews: List<TmdbReview> = emptyList(),
     val mdbRatings: List<MdbListRating> = emptyList(),
+    val mdbRatingBadges: MdbListRatingBadges = MdbListRatingBadges(),
+    val omdbAwards: String? = null,
     val lastUpdated: Long = System.currentTimeMillis(),
 )

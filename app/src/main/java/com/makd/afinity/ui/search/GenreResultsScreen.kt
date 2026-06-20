@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,13 +34,18 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.makd.afinity.R
 import com.makd.afinity.data.models.media.AfinityItem
+import com.makd.afinity.navigation.LocalPlayerOffset
 import com.makd.afinity.ui.components.FullScreenEmpty
 import com.makd.afinity.ui.components.FullScreenError
 import com.makd.afinity.ui.components.FullScreenLoading
@@ -61,8 +67,23 @@ fun GenreResultsScreen(
         viewModel.moviesPagingData.collectAsStateWithLifecycle().value.collectAsLazyPagingItems()
     val shows =
         viewModel.showsPagingData.collectAsStateWithLifecycle().value.collectAsLazyPagingItems()
+    val playerOffset = LocalPlayerOffset.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.onScreenResumed()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(genre) { viewModel.loadGenreResults(genre) }
+
+    val customPadding =
+        PaddingValues(top = 0.dp, start = 0.dp, end = 0.dp, bottom = max(0.dp, playerOffset))
 
     Column(modifier = modifier.fillMaxSize().safeDrawingPadding()) {
         TopAppBar(
@@ -96,6 +117,7 @@ fun GenreResultsScreen(
                     shows = shows,
                     onItemClick = onItemClick,
                     widthSizeClass = widthSizeClass,
+                    customPadding = customPadding,
                 )
             }
         }
@@ -108,6 +130,7 @@ private fun GenreResultsContent(
     shows: LazyPagingItems<AfinityItem>,
     onItemClick: (AfinityItem) -> Unit,
     widthSizeClass: WindowWidthSizeClass,
+    customPadding: PaddingValues,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf(stringResource(R.string.tab_movies), stringResource(R.string.tab_tv_shows))
@@ -173,7 +196,13 @@ private fun GenreResultsContent(
                 items = activeList,
                 widthSizeClass = widthSizeClass,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
+                contentPadding =
+                    PaddingValues(
+                        top = 16.dp,
+                        start = 16.dp,
+                        end = 16.dp,
+                        bottom = customPadding.calculateBottomPadding() + 16.dp,
+                    ),
             ) { item ->
                 MediaItemCard(
                     item = item,

@@ -16,15 +16,15 @@ import com.makd.afinity.data.repository.download.JellyfinDownloadRepository
 import com.makd.afinity.di.DownloadClient
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import java.io.File
-import java.io.FileOutputStream
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jellyfin.sdk.api.client.ApiClient
 import timber.log.Timber
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
 
 @HiltWorker
 class ImageDownloadWorker
@@ -35,7 +35,7 @@ constructor(
     private val sessionManager: SessionManager,
     private val databaseRepository: DatabaseRepository,
     private val downloadRepository: JellyfinDownloadRepository,
-    @DownloadClient private val okHttpClient: OkHttpClient,
+    @param:DownloadClient private val okHttpClient: OkHttpClient,
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -68,11 +68,18 @@ constructor(
                 inputData.getString(KEY_SOURCE_ID)
                     ?: return@withContext Result.failure(workDataOf("error" to "Missing source ID"))
 
+            val downloadId =
+                try {
+                    UUID.fromString(downloadIdString)
+                } catch (e: IllegalArgumentException) {
+                    return@withContext Result.failure(workDataOf("error" to "Invalid download ID"))
+                }
+
             try {
                 Timber.d("Starting image download for item: $itemId")
 
                 val download: DownloadDto =
-                    databaseRepository.getDownloadByItemId(itemId)
+                    databaseRepository.getDownload(downloadId)
                         ?: return@withContext Result.failure(
                             workDataOf("error" to "Download not found")
                         )
@@ -99,8 +106,15 @@ constructor(
                     "Loaded item from database: ${item.name}, has images: ${item.images.primary != null}"
                 )
 
-                val itemDir = downloadRepository.getItemDownloadDirectory(itemId)
-                val imagesDir = File(itemDir, "images").also { it.mkdirs() }
+                val itemDir = downloadRepository.getItemDownloadDirectory(download)
+                val imagesDir = File(itemDir, "images")
+
+                if (!imagesDir.exists() && !imagesDir.mkdirs()) {
+                    Timber.e("Failed to create images directory at ${imagesDir.absolutePath}")
+                    return@withContext Result.failure(
+                        workDataOf("error" to "Failed to create images directory")
+                    )
+                }
 
                 val images = item.images
                 val downloadedImages = mutableMapOf<String, android.net.Uri>()
@@ -199,6 +213,40 @@ constructor(
                             Timber.w(e, "Failed to download series logo")
                         }
                     }
+                    if (images.showPrimary != null) {
+                        try {
+                            val url = images.showPrimary.toString()
+                            if (url.startsWith("file://")) {
+                                Timber.d("Show primary already local, skipping download: $url")
+                            } else {
+                                Timber.d("Downloading show primary image from: $url")
+                                val localUri = downloadWithClient(url, "showPrimary")
+                                if (localUri != null) {
+                                    downloadedImages["showPrimary"] = localUri
+                                    Timber.i("Show primary image downloaded successfully")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.w(e, "Failed to download show primary image")
+                        }
+                    }
+                    if (images.showBackdrop != null) {
+                        try {
+                            val url = images.showBackdrop.toString()
+                            if (url.startsWith("file://")) {
+                                Timber.d("Show backdrop already local, skipping download: $url")
+                            } else {
+                                Timber.d("Downloading show backdrop image from: $url")
+                                val localUri = downloadWithClient(url, "showBackdrop")
+                                if (localUri != null) {
+                                    downloadedImages["showBackdrop"] = localUri
+                                    Timber.i("Show backdrop image downloaded successfully")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.w(e, "Failed to download show backdrop image")
+                        }
+                    }
                 }
 
                 Timber.i(
@@ -231,7 +279,10 @@ constructor(
         baseName: String,
     ): android.net.Uri? {
         val request =
-            Request.Builder().url(url).header("Authorization", "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"").build()
+            Request.Builder()
+                .url(url)
+                .header("Authorization", "MediaBrowser Token=\"${apiClient.accessToken ?: ""}\"")
+                .build()
 
         okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -288,8 +339,8 @@ constructor(
                     backdrop = downloadedImages["backdrop"] ?: images.backdrop,
                     thumb = downloadedImages["thumb"] ?: images.thumb,
                     logo = downloadedImages["logo"] ?: images.logo,
-                    showPrimary = images.showPrimary,
-                    showBackdrop = images.showBackdrop,
+                    showPrimary = downloadedImages["showPrimary"] ?: images.showPrimary,
+                    showBackdrop = downloadedImages["showBackdrop"] ?: images.showBackdrop,
                     showLogo = downloadedImages["series_logo"] ?: images.showLogo,
                     primaryImageBlurHash = images.primaryImageBlurHash,
                     backdropImageBlurHash = images.backdropImageBlurHash,
