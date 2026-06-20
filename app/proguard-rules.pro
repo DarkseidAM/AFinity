@@ -26,7 +26,7 @@
 
 # Dolby Vision JNI bridge: native method + class names must survive R8 so the
 # libdovi_bridge.so JNI lookup (resolved by mangled name) still binds.
--keepclasseswithmembernames class com.makd.afinity.player.exoplayer.dovi.DoviBridge {
+-keep class com.makd.afinity.player.exoplayer.dovi.DoviBridge {
     native <methods>;
 }
 -keepclasseswithmembernames class * {

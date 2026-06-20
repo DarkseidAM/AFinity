@@ -45,6 +45,13 @@ internal class DolbyVisionExtractorsFactory(
     private val stripHdr10PlusSei: Boolean = false
 ) : ExtractorsFactory {
 
+    init {
+        // Enable the MKV DV7->HEVC MIME mapping in the vendored MatroskaExtractor so DV
+        // tracks fall back to video/hevc on non-DV devices when conversion is active.
+        com.makd.afinity.player.exoplayer.dovi.dvmkv.DolbyVisionCompatibility
+            .setMapDv7ToHevcEnabled(config.active)
+    }
+
     override fun createExtractors(): Array<Extractor> =
         delegate.createExtractors().map(::wrap).toTypedArray()
 
@@ -809,11 +816,9 @@ internal class Hdr10PlusStrippingTrackOutput(
                 HevcHdr10PlusStripper.stripHdr10PlusAnnexB(pendingBuf, sampleEnd)
         }
 
-        // Recovery Fallback: If length-delimited parsing failed because the codec string error
-        // caused incorrect default NAL sizing, fall back to a byte-level Annex-B scan.
-        if (stripped == null && nalFormat == NalFormat.LENGTH_DELIMITED) {
-            stripped = HevcHdr10PlusStripper.stripHdr10PlusAnnexB(pendingBuf, sampleEnd)
-        }
+        // Note: the length-delimited path already self-falls-back to an Annex-B scan when
+        // NAL sizing actually fails; a null here means "no HDR10+ SEI present", so we must
+        // NOT re-scan every frame (that would be a per-frame byte scan on the playback thread).
 
         val outData = stripped ?: pendingBuf
         val outLen = stripped?.size ?: sampleEnd

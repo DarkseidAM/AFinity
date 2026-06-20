@@ -16,6 +16,7 @@
 package com.makd.afinity.player.exoplayer.dovi.dvmkv;
 
 import androidx.media3.common.C;
+import androidx.media3.common.ParserException;
 import androidx.media3.extractor.ExtractorInput;
 import java.io.EOFException;
 import java.io.IOException;
@@ -86,7 +87,8 @@ import java.io.IOException;
       int firstByte = scratch[0] & 0xFF;
       length = parseUnsignedVarintLength(firstByte);
       if (length == C.LENGTH_UNSET) {
-        throw new IllegalStateException("No valid varint length mask found");
+        throw ParserException.createForMalformedContainer(
+            "No valid varint length mask found", /* cause= */ null);
       }
       state = STATE_READ_CONTENTS;
     }

@@ -142,10 +142,18 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
           elementState = ELEMENT_STATE_READ_ID;
           return true;
         case EbmlProcessor.ELEMENT_TYPE_BINARY:
+          if (elementContentSize > Integer.MAX_VALUE) {
+            throw ParserException.createForMalformedContainer(
+                "Binary element size: " + elementContentSize, /* cause= */ null);
+          }
           processor.binaryElement(elementId, (int) elementContentSize, input);
           elementState = ELEMENT_STATE_READ_ID;
           return true;
         case EbmlProcessor.ELEMENT_TYPE_UNKNOWN:
+          if (elementContentSize > Integer.MAX_VALUE) {
+            throw ParserException.createForMalformedContainer(
+                "Unknown element size: " + elementContentSize, /* cause= */ null);
+          }
           input.skipFully((int) elementContentSize);
           elementState = ELEMENT_STATE_READ_ID;
           elementContentSize = 0;
