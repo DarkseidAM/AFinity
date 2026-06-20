@@ -39,9 +39,10 @@ internal object HevcHdr10PlusStripper {
         nalLengthFieldLength: Int
     ): ByteArray? {
         if (sampleLen < nalLengthFieldLength) return null
-        val out = ByteArrayOutputStream(sampleLen)
+        // Lazy allocation: only allocate/copy once an HDR10+ SEI is actually stripped. Frames
+        // with no HDR10+ SEI (the common case) return null with zero allocation.
+        var out: ByteArrayOutputStream? = null
         var pos = 0
-        var changed = false
         while (pos + nalLengthFieldLength <= sampleLen) {
             var nalSize = 0
             for (i in 0 until nalLengthFieldLength) {
@@ -60,31 +61,44 @@ internal object HevcHdr10PlusStripper {
                 val filtered = filterSeiNal(sample, nalStart, nalSize)
                 when {
                     filtered == null -> {
-                        // No HDR10+ in this NAL; keep as-is
-                        for (i in nalLengthFieldLength - 1 downTo 0) {
-                            out.write((nalSize ushr (i * 8)) and 0xFF)
+                        // No HDR10+ in this NAL; keep as-is (only emit once rewriting started).
+                        out?.let {
+                            for (i in nalLengthFieldLength - 1 downTo 0) {
+                                it.write((nalSize ushr (i * 8)) and 0xFF)
+                            }
+                            it.write(sample, nalStart, nalSize)
                         }
-                        out.write(sample, nalStart, nalSize)
                     }
                     filtered.isNotEmpty() -> {
-                        // Some HDR10+ stripped; output reduced SEI NAL
-                        changed = true
+                        // Some HDR10+ stripped; output reduced SEI NAL.
+                        if (out == null) {
+                            out = ByteArrayOutputStream(sampleLen)
+                            out.write(sample, 0, pos)
+                        }
                         for (i in nalLengthFieldLength - 1 downTo 0) {
                             out.write((filtered.size ushr (i * 8)) and 0xFF)
                         }
                         out.write(filtered)
                     }
-                    else -> changed = true // entire NAL was HDR10+; drop it
+                    else -> {
+                        // Entire NAL was HDR10+; drop it.
+                        if (out == null) {
+                            out = ByteArrayOutputStream(sampleLen)
+                            out.write(sample, 0, pos)
+                        }
+                    }
                 }
             } else {
-                for (i in nalLengthFieldLength - 1 downTo 0) {
-                    out.write((nalSize ushr (i * 8)) and 0xFF)
+                out?.let {
+                    for (i in nalLengthFieldLength - 1 downTo 0) {
+                        it.write((nalSize ushr (i * 8)) and 0xFF)
+                    }
+                    it.write(sample, nalStart, nalSize)
                 }
-                out.write(sample, nalStart, nalSize)
             }
             pos = nalStart + nalSize
         }
-        return if (changed) out.toByteArray() else null
+        return out?.toByteArray()
     }
 
     /**
@@ -92,13 +106,14 @@ internal object HevcHdr10PlusStripper {
      * Returns the rewritten bytes, or null if nothing was stripped.
      */
     fun stripHdr10PlusAnnexB(sample: ByteArray, sampleLen: Int): ByteArray? {
-        val out = ByteArrayOutputStream(sampleLen)
+        // Lazy allocation: only allocate/copy once an HDR10+ SEI is actually stripped. Frames
+        // with no HDR10+ SEI (the common case) return null with zero allocation.
+        var out: ByteArrayOutputStream? = null
         var scan = 0
-        var changed = false
         while (scan < sampleLen) {
             val startCode = findStartCode(sample, scan, sampleLen)
             if (startCode < 0) {
-                out.write(sample, scan, sampleLen - scan)
+                out?.write(sample, scan, sampleLen - scan)
                 break
             }
             val scLen = startCodeLength(sample, startCode, sampleLen)
@@ -106,7 +121,22 @@ internal object HevcHdr10PlusStripper {
             val nextStartCode = findStartCode(sample, nalBegin + 2, sampleLen)
             val nalEnd = if (nextStartCode < 0) sampleLen else nextStartCode
 
-            if (startCode > scan) out.write(sample, scan, startCode - scan)
+            // Backfill the prefix verbatim the first time we mutate, then allocate.
+            fun ensureOut() {
+                if (out == null) {
+                    out = ByteArrayOutputStream(sampleLen)
+                    out!!.write(sample, 0, startCode)
+                } else if (startCode > scan) {
+                    out!!.write(sample, scan, startCode - scan)
+                }
+            }
+            // Copy inter-bytes + this region only once rewriting has started.
+            fun keepVerbatim() {
+                out?.let {
+                    if (startCode > scan) it.write(sample, scan, startCode - scan)
+                    it.write(sample, startCode, nalEnd - startCode)
+                }
+            }
 
             if (nalBegin < nalEnd) {
                 val nalSize = nalEnd - nalBegin
@@ -114,21 +144,24 @@ internal object HevcHdr10PlusStripper {
                 if (nalType == NAL_TYPE_PREFIX_SEI || nalType == NAL_TYPE_SUFFIX_SEI) {
                     val filtered = filterSeiNal(sample, nalBegin, nalSize)
                     when {
-                        filtered == null -> out.write(sample, startCode, nalEnd - startCode)
+                        filtered == null -> keepVerbatim()
                         filtered.isNotEmpty() -> {
-                            changed = true
-                            out.write(sample, startCode, scLen)
-                            out.write(filtered)
+                            ensureOut()
+                            out!!.write(sample, startCode, scLen)
+                            out!!.write(filtered)
                         }
-                        else -> changed = true // entire NAL was HDR10+; drop it
+                        else -> ensureOut() // entire NAL was HDR10+; drop it
                     }
                 } else {
-                    out.write(sample, startCode, nalEnd - startCode)
+                    keepVerbatim()
                 }
+            } else {
+                // Degenerate NAL with no body; preserve inter-bytes if rewriting.
+                out?.let { if (startCode > scan) it.write(sample, scan, startCode - scan) }
             }
             scan = nalEnd
         }
-        return if (changed) out.toByteArray() else null
+        return out?.toByteArray()
     }
 
     /**

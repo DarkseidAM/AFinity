@@ -138,7 +138,11 @@ object DoviBridge {
             0x7c, 0x01, 0x20, 0x40,
             0x21, 0x33, 0x55, 0x77, 0x11, 0x02, 0x06, 0x10
         )
-        val output = convertDv7RpuToDv81(payload, mode = 2)
+        // Call the native method directly rather than convertDv7RpuToDv81(): the wrapper bumps
+        // the runtime telemetry counters, and this synthetic startup probe must not pollute them.
+        val output = runCatching { nativeConvertDv7RpuToDv81(payload, 2) }
+            .onFailure { Log.w(TAG, "Self-test conversion failed: ${it.message}") }
+            .getOrNull()
         val result = if (output != null && output.isNotEmpty()) {
             SelfTestResult(
                 passed = true,

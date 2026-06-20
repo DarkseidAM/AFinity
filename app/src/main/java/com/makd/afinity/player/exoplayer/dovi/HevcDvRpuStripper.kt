@@ -24,9 +24,10 @@ internal object HevcDvRpuStripper {
         nalLengthFieldLength: Int
     ): ByteArray? {
         if (sampleLen < nalLengthFieldLength) return null
-        val out = ByteArrayOutputStream(sampleLen)
+        // Lazy allocation: only allocate/copy once we actually hit a NAL to drop. If the
+        // sample has no RPU/EL NALs (the common case) we return null with zero allocation.
+        var out: ByteArrayOutputStream? = null
         var pos = 0
-        var changed = false
         while (pos + nalLengthFieldLength <= sampleLen) {
             var nalSize = 0
             for (i in 0 until nalLengthFieldLength) {
@@ -36,18 +37,23 @@ internal object HevcDvRpuStripper {
             if (nalSize <= 0 || nalSize > sampleLen - nalStart) return null
             val nalType = (sample[nalStart].toInt() ushr 1) and 0x3F
             if (nalType == NAL_TYPE_DV_RPU || nalType == NAL_TYPE_DV_EL) {
-                // Drop this NAL entirely — don't write start code or payload
-                changed = true
-            } else {
-                // Keep: write length prefix + NAL data
-                for (i in nalLengthFieldLength - 1 downTo 0) {
-                    out.write((nalSize ushr (i * 8)) and 0xFF)
+                if (out == null) {
+                    // First NAL to drop: backfill everything kept so far verbatim.
+                    out = ByteArrayOutputStream(sampleLen)
+                    out.write(sample, 0, pos)
                 }
-                out.write(sample, nalStart, nalSize)
+                // Drop this NAL entirely — don't write length prefix or payload.
+            } else {
+                out?.let {
+                    for (i in nalLengthFieldLength - 1 downTo 0) {
+                        it.write((nalSize ushr (i * 8)) and 0xFF)
+                    }
+                    it.write(sample, nalStart, nalSize)
+                }
             }
             pos = nalStart + nalSize
         }
-        return if (changed) out.toByteArray() else null
+        return out?.toByteArray()
     }
 
     /**
@@ -55,13 +61,12 @@ internal object HevcDvRpuStripper {
      * Returns the rewritten bytes, or null if nothing was stripped.
      */
     fun stripRpuAnnexB(sample: ByteArray, sampleLen: Int): ByteArray? {
-        val out = ByteArrayOutputStream(sampleLen)
+        var out: ByteArrayOutputStream? = null
         var scan = 0
-        var changed = false
         while (scan < sampleLen) {
             val startCode = findStartCode(sample, scan, sampleLen)
             if (startCode < 0) {
-                out.write(sample, scan, sampleLen - scan)
+                out?.write(sample, scan, sampleLen - scan)
                 break
             }
             val scLen = startCodeLength(sample, startCode, sampleLen)
@@ -69,21 +74,29 @@ internal object HevcDvRpuStripper {
             val nextStartCode = findStartCode(sample, nalBegin + 2, sampleLen)
             val nalEnd = if (nextStartCode < 0) sampleLen else nextStartCode
 
-            // Write any bytes before this start code
-            if (startCode > scan) out.write(sample, scan, startCode - scan)
+            val drop = nalBegin < nalEnd &&
+                (((sample[nalBegin].toInt() ushr 1) and 0x3F).let {
+                    it == NAL_TYPE_DV_RPU || it == NAL_TYPE_DV_EL
+                })
 
-            if (nalBegin < nalEnd) {
-                val nalType = (sample[nalBegin].toInt() ushr 1) and 0x3F
-                if (nalType == NAL_TYPE_DV_RPU || nalType == NAL_TYPE_DV_EL) {
-                    changed = true
-                    // Drop start code + NAL payload entirely
-                } else {
-                    out.write(sample, startCode, nalEnd - startCode)
+            if (drop) {
+                if (out == null) {
+                    // First NAL to drop: backfill everything kept so far verbatim.
+                    out = ByteArrayOutputStream(sampleLen)
+                    out.write(sample, 0, startCode)
+                } else if (startCode > scan) {
+                    out.write(sample, scan, startCode - scan)
+                }
+                // Drop start code + NAL payload entirely.
+            } else {
+                out?.let {
+                    if (startCode > scan) it.write(sample, scan, startCode - scan)
+                    if (nalBegin < nalEnd) it.write(sample, startCode, nalEnd - startCode)
                 }
             }
             scan = nalEnd
         }
-        return if (changed) out.toByteArray() else null
+        return out?.toByteArray()
     }
 
     private fun findStartCode(data: ByteArray, from: Int, limit: Int): Int {
