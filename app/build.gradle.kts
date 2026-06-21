@@ -36,7 +36,7 @@ configure<ApplicationExtension> {
 
     defaultConfig {
         applicationId = "com.makd.afinity"
-        minSdk = 35
+        minSdk = 34
         targetSdk = 36
         versionCode = appVersionCode.toInt()
         versionName = appVersionName
